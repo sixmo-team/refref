@@ -1,7 +1,8 @@
 "use client";
 import { useState, ReactNode, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
+import { getQueryKey } from "@trpc/react-query";
 import {
   Stepper,
   StepperItem,
@@ -21,6 +22,8 @@ import {
   ProgramTemplateStepKeyType,
   getProgramTemplateById,
 } from "@refref/types";
+import { useSession } from "@/lib/auth-client";
+import { useDeniedRead } from "@/hooks/use-denied-read";
 
 // Map step keys to their respective components
 const stepComponentMap: Record<
@@ -46,10 +49,58 @@ type StepDef = {
 
 export default function ProgramSetupPage() {
   const params = useParams<{ id: string }>();
+  const session = useSession();
+  const scope = {
+    userId: session.data?.user.id ?? "",
+    organizationId: session.data?.session.activeOrganizationId ?? "",
+  };
+  if (session.isPending) return <p>Loading session…</p>;
+  if (session.error || !scope.userId || !scope.organizationId)
+    return (
+      <div role="alert">
+        An active organization session is required.
+        {session.error && (
+          <Button onClick={() => void session.refetch()}>Retry session</Button>
+        )}
+      </div>
+    );
+  return (
+    <ProgramSetup
+      key={`${scope.userId}:${scope.organizationId}:${params.id}`}
+      scope={scope}
+    />
+  );
+}
+
+function ProgramSetup({
+  scope,
+}: {
+  scope: RouterInputs["program"]["getById"]["scope"];
+}) {
+  const params = useParams<{ id: string }>();
   const router = useRouter();
 
-  const { data: program, isLoading: isLoadingProgram } =
-    api.program.getById.useQuery(params?.id ?? "");
+  const programQuery = api.program.getById.useQuery({ id: params.id, scope });
+  const utils = api.useUtils();
+  const blocked = useDeniedRead({
+    scopeKey: `${scope.userId}:${scope.organizationId}:${params.id}`,
+    denied:
+      programQuery.error?.data?.code === "UNAUTHORIZED" ||
+      programQuery.error?.data?.code === "FORBIDDEN",
+    queries: [programQuery],
+    reset: (queryClient) => {
+      void utils.rewardRules.getByProgram.reset({
+        programId: params.id,
+        scope,
+      });
+      void queryClient.resetQueries({
+        queryKey: getQueryKey(api.productSecrets.get, { scope }, "query"),
+      });
+      void utils.program.getById.reset({ id: params.id, scope });
+    },
+  });
+  const isLoadingProgram = programQuery.isLoading;
+  const program = blocked ? undefined : programQuery.data;
 
   const [activeStep, setActiveStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,21 +112,22 @@ export default function ProgramSetupPage() {
 
   const stepRef = useRef<StepRef>(null);
 
-  const utils = api.useUtils();
+  useEffect(() => {
+    if (!blocked) return;
+    setAggregatedConfig({});
+    setActiveStep(0);
+    setIsSubmitting(false);
+  }, [blocked]);
 
   const saveTemplateConfigurationMutation =
     api.program.saveTemplateConfiguration.useMutation({
-      onSuccess: async (data) => {
-        toast.success("Program setup completed successfully!");
-        // Invalidate and refetch the program query to get updated status
-        await utils.program.getById.invalidate(params.id);
-      },
-      onError: (error) => {
-        toast.error(`Program setup failed: ${error.message}`);
-        console.error("Program setup failed:", error);
-      },
-      onSettled: () => {
-        setIsSubmitting(false);
+      onSettled: (_result, _error, variables) => {
+        void utils.program.getById.invalidate({ id: variables.id, scope });
+        void utils.rewardRules.getByProgram.invalidate({
+          programId: variables.id,
+          scope,
+        });
+        void utils.program.getAll.invalidate();
       },
     });
 
@@ -83,11 +135,23 @@ export default function ProgramSetupPage() {
   useEffect(() => {
     if (!program) return;
 
-    if (program.status === "active") {
+    if (program.status === "active" || program.status === "pending_approval") {
       router.replace(`/programs/${params?.id}`);
     }
   }, [program, params?.id, router]);
 
+  if (blocked || (programQuery.isError && !program))
+    return (
+      <div role="alert">
+        Unable to load program setup.{" "}
+        <Button
+          disabled={programQuery.isFetching}
+          onClick={() => void programQuery.refetch()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
   if (isLoadingProgram || !program) {
     return (
       <div className="flex flex-1 items-center justify-center h-screen">
@@ -139,11 +203,6 @@ export default function ProgramSetupPage() {
     { label: "Setup", href: `/programs/${params?.id}/setup` },
   ];
 
-  // Go Live handler (stub, as in edit page)
-  const handleGoLive = () => {
-    // TODO: Implement Go Live logic if needed
-  };
-
   // Helper to map step data to the consolidated config structure
   // Now returns raw data under a key specific to the step
   function mapStepDataToConsolidated(stepKey: string, data: any) {
@@ -159,7 +218,8 @@ export default function ProgramSetupPage() {
 
   // Function to handle moving to the next step or completing the setup
   async function handleNextOrComplete() {
-    if (!stepRef.current) return;
+    const currentStep = stepRef.current;
+    if (blocked || !currentStep) return;
 
     try {
       setIsSubmitting(true);
@@ -171,7 +231,8 @@ export default function ProgramSetupPage() {
       }
 
       // Validate and get data from the current step
-      const stepData = await stepRef.current.submitForm();
+      const stepData = await currentStep.submitForm();
+      if (!stepRef.current) return;
 
       // Aggregate the data
       const newAggregatedConfig = {
@@ -198,16 +259,20 @@ export default function ProgramSetupPage() {
           brandConfig: brandConfig,
         };
 
-        console.log("Submitting template config:", finalInput);
-        await saveTemplateConfigurationMutation.mutateAsync(finalInput);
-        // Navigation happens in the onSuccess callback after query invalidation
+        saveTemplateConfigurationMutation.mutate(finalInput, {
+          onSuccess: () => {
+            toast.success("Program setup completed successfully!");
+          },
+          onError: (error) =>
+            toast.error(`Program setup failed: ${error.message}`),
+          onSettled: () => setIsSubmitting(false),
+        });
       } else {
         // Otherwise, move to the next step
         setActiveStep((prev) => prev + 1);
         setIsSubmitting(false); // Reset submitting state for next step
       }
     } catch (error) {
-      console.error("Error in setup step:", error);
       toast.error(
         error instanceof Error
           ? error.message
@@ -250,7 +315,14 @@ export default function ProgramSetupPage() {
             const step = STEPS[activeStep];
             if (!step || !step.Component) return null;
             const StepComponent = step.Component;
-            return <StepComponent ref={stepRef} programId={params?.id ?? ""} />;
+            return (
+              <StepComponent
+                key={step.key}
+                ref={stepRef}
+                programId={params.id}
+                scope={scope}
+              />
+            );
           })()}
         </div>
 

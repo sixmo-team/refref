@@ -13,13 +13,17 @@ import {
   unique,
   index,
   uniqueIndex,
+  bigint,
+  foreignKey,
+  check,
+  type PgTableExtraConfigValue,
 } from "drizzle-orm/pg-core";
 import { createId as createCuid } from "@paralleldrive/cuid2";
 import { createId, isValidEntityType } from "@refref/id";
 import type {
   ProgramConfigV1Type,
   EventDefinitionConfigV1Type,
-  EventMetadataV1Type,
+  EventMetadata,
   RewardRuleConfigV1Type,
   RewardMetadataV1Type,
 } from "@refref/types";
@@ -155,42 +159,57 @@ export const invitation = pgTable("invitation", {
     .references(() => user.id, { onDelete: "cascade" }),
 });
 
-export const apikey = pgTable("apikey", {
-  ...baseFields("apikey"),
-  name: text("name"),
-  start: text("start"),
-  prefix: text("prefix"),
-  key: text("key").notNull(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  refillInterval: integer("refill_interval"),
-  refillAmount: integer("refill_amount"),
-  lastRefillAt: timestamp("last_refill_at"),
-  enabled: boolean("enabled"),
-  rateLimitEnabled: boolean("rate_limit_enabled"),
-  rateLimitTimeWindow: integer("rate_limit_time_window"),
-  rateLimitMax: integer("rate_limit_max"),
-  requestCount: integer("request_count"),
-  remaining: integer("remaining"),
-  lastRequest: timestamp("last_request"),
-  expiresAt: timestamp("expires_at"),
-  permissions: text("permissions"),
-  metadata: text("metadata"),
-});
+export const apikey = pgTable(
+  "apikey",
+  {
+    ...baseFields("apikey"),
+    name: text("name"),
+    start: text("start"),
+    prefix: text("prefix"),
+    key: text("key").notNull(),
+    configId: text("config_id").notNull().default("default"),
+    referenceId: text("reference_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    refillInterval: integer("refill_interval"),
+    refillAmount: integer("refill_amount"),
+    lastRefillAt: timestamp("last_refill_at"),
+    enabled: boolean("enabled"),
+    rateLimitEnabled: boolean("rate_limit_enabled"),
+    rateLimitTimeWindow: integer("rate_limit_time_window"),
+    rateLimitMax: integer("rate_limit_max"),
+    requestCount: integer("request_count"),
+    remaining: integer("remaining"),
+    lastRequest: timestamp("last_request"),
+    expiresAt: timestamp("expires_at"),
+    permissions: text("permissions"),
+    metadata: text("metadata"),
+  },
+  (table) => [
+    index("apikey_reference_id_idx").on(table.referenceId),
+    index("apikey_config_id_idx").on(table.configId),
+    index("apikey_key_idx").on(table.key),
+  ],
+);
 
-export const program = pgTable("program", {
-  ...baseFields("program"),
-  productId: text("product_id")
-    .notNull()
-    .references(() => product.id, { onDelete: "cascade" }),
-  programTemplateId: text("program_template_id").notNull(), // Template ID from PROGRAM_TEMPLATES constants
-  name: text("name").notNull(),
-  status: text("status").notNull(), // e.g., "active", "inactive", "draft"
-  startDate: timestamp("start_date"),
-  endDate: timestamp("end_date"),
-  config: jsonb("config").$type<ProgramConfigV1Type>(),
-});
+export const program = pgTable(
+  "program",
+  {
+    ...baseFields("program"),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "cascade" }),
+    programTemplateId: text("program_template_id").notNull(), // Template ID from PROGRAM_TEMPLATES constants
+    name: text("name").notNull(),
+    status: text("status").notNull(), // e.g., "active", "inactive", "draft"
+    startDate: timestamp("start_date"),
+    endDate: timestamp("end_date"),
+    config: jsonb("config").$type<ProgramConfigV1Type>(),
+  },
+  (table) => [
+    unique("program_product_id_unique").on(table.productId, table.id),
+  ],
+);
 
 export const programUser = pgTable("program_user", {
   ...baseFields("programUser"),
@@ -221,9 +240,57 @@ export const participant = pgTable(
       .notNull()
       .references(() => product.id, { onDelete: "cascade" }),
     externalId: text("external_id"),
+    firstPurchaseEventId: text("first_purchase_event_id"),
+    ownerUserId: text("owner_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    ownershipVerifiedBy: text("ownership_verified_by").references(
+      () => user.id,
+      { onDelete: "restrict" },
+    ),
+    ownershipVerifiedAt: timestamp("ownership_verified_at", {
+      withTimezone: true,
+    }),
+    ownershipEvidence: text("ownership_evidence"),
+    payoutRecipient: jsonb("payout_recipient").$type<{
+      name: string;
+      details: string;
+      verifiedAt: string;
+      verifiedBy: string;
+    }>(),
   },
-  (table) => [unique().on(table.productId, table.externalId)],
+  (table): PgTableExtraConfigValue[] => [
+    unique().on(table.productId, table.externalId),
+    unique("participant_product_id_unique").on(table.productId, table.id),
+    unique("participant_product_id_owner_unique").on(
+      table.productId,
+      table.id,
+      table.ownerUserId,
+    ),
+    uniqueIndex("participant_verified_owner_unique")
+      .on(table.productId, table.ownerUserId)
+      .where(sql`${table.ownerUserId} IS NOT NULL`),
+    foreignKey({
+      name: "participant_first_purchase_scope_fk",
+      columns: [table.productId, table.id, table.firstPurchaseEventId],
+      foreignColumns: [event.productId, event.participantId, event.id],
+    }).onDelete("restrict"),
+    check(
+      "participant_verified_ownership_check",
+      sql`(${table.ownerUserId} IS NULL AND ${table.ownershipVerifiedBy} IS NULL AND ${table.ownershipVerifiedAt} IS NULL AND ${table.ownershipEvidence} IS NULL AND ${table.payoutRecipient} IS NULL) OR (${table.ownerUserId} IS NOT NULL AND ${table.ownershipVerifiedBy} IS NOT NULL AND ${table.ownershipVerifiedAt} IS NOT NULL AND ${table.ownershipEvidence} IS NOT NULL AND ${table.payoutRecipient} IS NOT NULL AND length(${table.ownershipEvidence})>0 AND jsonb_typeof(${table.payoutRecipient})='object')`,
+    ),
+  ],
 );
+// General participant views do not expose verified payout identity or recipient details.
+export const participantProfileColumns = {
+  id: participant.id,
+  createdAt: participant.createdAt,
+  updatedAt: participant.updatedAt,
+  name: participant.name,
+  email: participant.email,
+  productId: participant.productId,
+  externalId: participant.externalId,
+};
 
 // Note: event table moved after referral table to fix forward reference
 
@@ -242,6 +309,7 @@ export const rewardRule = pgTable(
     isActive: boolean("is_active").default(true),
   },
   (table) => [
+    unique("reward_rule_program_id_unique").on(table.programId, table.id),
     // Indexes for performance
     index("reward_rule_program_id_idx").on(table.programId),
     index("reward_rule_type_idx").on(table.type),
@@ -255,10 +323,10 @@ export const reward = pgTable(
     ...baseFields("reward"),
     participantId: text("participant_id")
       .notNull()
-      .references(() => participant.id, { onDelete: "cascade" }),
+      .references(() => participant.id, { onDelete: "restrict" }),
     programId: text("program_id")
       .notNull()
-      .references(() => program.id, { onDelete: "cascade" }),
+      .references(() => program.id, { onDelete: "restrict" }),
     rewardRuleId: text("reward_rule_id").references(() => rewardRule.id),
     eventId: text("event_id").references(() => event.id),
     rewardType: text("reward_type").notNull(), // e.g., "cash", "discount", "gift_card"
@@ -269,6 +337,16 @@ export const reward = pgTable(
     metadata: jsonb("metadata").$type<RewardMetadataV1Type>(),
   },
   (table) => [
+    foreignKey({
+      name: "reward_rule_scope_fk",
+      columns: [table.programId, table.rewardRuleId],
+      foreignColumns: [rewardRule.programId, rewardRule.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "reward_event_program_scope_fk",
+      columns: [table.programId, table.eventId],
+      foreignColumns: [event.programId, event.id],
+    }).onDelete("restrict"),
     // Indexes for performance
     index("reward_participant_id_idx").on(table.participantId),
     index("reward_program_id_idx").on(table.programId),
@@ -276,6 +354,11 @@ export const reward = pgTable(
     index("reward_event_id_idx").on(table.eventId),
     index("reward_status_idx").on(table.status),
     index("reward_created_at_idx").on(table.createdAt),
+    uniqueIndex("reward_event_rule_participant_unique_idx").on(
+      table.eventId,
+      table.rewardRuleId,
+      table.participantId,
+    ),
   ],
 );
 
@@ -293,20 +376,37 @@ export const refcode = pgTable(
   "refcode",
   {
     ...baseFields("refcode"),
+    isActive: boolean("is_active").notNull().default(true),
     // Auto-generated 7-character code (e.g., "abc1234")
     code: text("code").notNull(),
     // Core relationships
     participantId: text("participant_id")
       .notNull()
-      .references(() => participant.id, { onDelete: "cascade" }),
+      .references(() => participant.id, { onDelete: "restrict" }),
     programId: text("program_id")
       .notNull()
-      .references(() => program.id, { onDelete: "cascade" }),
+      .references(() => program.id, { onDelete: "restrict" }),
     productId: text("product_id")
       .notNull()
-      .references(() => product.id, { onDelete: "cascade" }),
+      .references(() => product.id, { onDelete: "restrict" }),
   },
   (table) => [
+    unique("refcode_scope_unique").on(
+      table.productId,
+      table.programId,
+      table.participantId,
+      table.id,
+    ),
+    foreignKey({
+      name: "refcode_participant_scope_fk",
+      columns: [table.productId, table.participantId],
+      foreignColumns: [participant.productId, participant.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "refcode_program_scope_fk",
+      columns: [table.productId, table.programId],
+      foreignColumns: [program.productId, program.id],
+    }).onDelete("restrict"),
     // Unique index for globally unique codes
     uniqueIndex("refcode_code_unique_idx").on(table.code),
     // Index for participant lookups
@@ -386,15 +486,72 @@ export const participantRelations = relations(participant, ({ one, many }) => ({
   refcodes: many(refcode),
 }));
 
-export const referral = pgTable("referral", {
-  ...baseFields("referral"),
-  referrerId: text("referrer_id")
-    .notNull()
-    .references(() => participant.id, { onDelete: "cascade" }),
-  externalId: text("external_id").notNull(),
-  email: text("email"),
-  name: text("name"),
-});
+export const referral = pgTable(
+  "referral",
+  {
+    ...baseFields("referral"),
+    productId: text("product_id").references(() => product.id, {
+      onDelete: "restrict",
+    }),
+    refcodeId: text("refcode_id").references(() => refcode.id, {
+      onDelete: "restrict",
+    }),
+    appliedCode: text("applied_code"),
+    referrerId: text("referrer_id")
+      .notNull()
+      .references(() => participant.id, { onDelete: "restrict" }),
+    externalId: text("external_id").notNull(),
+    programId: text("program_id").references(() => program.id, {
+      onDelete: "restrict",
+    }),
+    email: text("email"),
+    name: text("name"),
+  },
+  (table) => [
+    index("referral_program_id_idx").on(table.programId),
+    unique("referral_product_id_unique").on(table.productId, table.id),
+    unique("referral_product_program_id_unique").on(
+      table.productId,
+      table.programId,
+      table.id,
+    ),
+    unique("referral_scope_unique").on(
+      table.productId,
+      table.programId,
+      table.referrerId,
+      table.id,
+    ),
+    foreignKey({
+      name: "referral_referrer_scope_fk",
+      columns: [table.productId, table.referrerId],
+      foreignColumns: [participant.productId, participant.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "referral_program_scope_fk",
+      columns: [table.productId, table.programId],
+      foreignColumns: [program.productId, program.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "referral_code_scope_fk",
+      columns: [
+        table.productId,
+        table.programId,
+        table.referrerId,
+        table.refcodeId,
+      ],
+      foreignColumns: [
+        refcode.productId,
+        refcode.programId,
+        refcode.participantId,
+        refcode.id,
+      ],
+    }).onDelete("restrict"),
+    check(
+      "referral_code_pair_check",
+      sql`(${table.refcodeId} IS NULL)=(${table.appliedCode} IS NULL) AND (${table.refcodeId} IS NULL OR (${table.productId} IS NOT NULL AND ${table.programId} IS NOT NULL))`,
+    ),
+  ],
+);
 
 // Event table (moved here to fix forward reference to referral table)
 export const event = pgTable(
@@ -403,9 +560,9 @@ export const event = pgTable(
     ...baseFields("event"),
     productId: text("product_id")
       .notNull()
-      .references(() => product.id, { onDelete: "cascade" }),
+      .references(() => product.id, { onDelete: "restrict" }),
     programId: text("program_id").references(() => program.id, {
-      onDelete: "cascade",
+      onDelete: "restrict",
     }),
     participantId: text("participant_id").references(() => participant.id),
     referralId: text("referral_id").references(() => referral.id),
@@ -413,9 +570,50 @@ export const event = pgTable(
       .notNull()
       .references(() => eventDefinition.id),
     status: text("status").notNull().default("pending"),
-    metadata: jsonb("metadata").$type<EventMetadataV1Type>(),
+    businessKey: text("business_key"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<EventMetadata>(),
   },
   (table) => [
+    unique("event_owner_unique").on(
+      table.productId,
+      table.participantId,
+      table.id,
+    ),
+    unique("event_product_id_unique").on(table.productId, table.id),
+    unique("event_program_id_unique").on(table.programId, table.id),
+    foreignKey({
+      name: "event_program_scope_fk",
+      columns: [table.productId, table.programId],
+      foreignColumns: [program.productId, program.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "event_participant_scope_fk",
+      columns: [table.productId, table.participantId],
+      foreignColumns: [participant.productId, participant.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "event_referral_scope_fk",
+      columns: [table.productId, table.programId, table.referralId],
+      foreignColumns: [referral.productId, referral.programId, referral.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "event_referral_product_scope_fk",
+      columns: [table.productId, table.referralId],
+      foreignColumns: [referral.productId, referral.id],
+    }).onDelete("restrict"),
+    check(
+      "event_metadata_version_check",
+      sql`${table.metadata} IS NULL OR COALESCE(jsonb_typeof(${table.metadata})='object' AND (${table.metadata}->'schemaVersion'='1'::jsonb OR ${table.metadata}->'schemaVersion'='2'::jsonb),false)`,
+    ),
+    check(
+      "purchase_v2_pricing_check",
+      sql`${table.metadata}->>'schemaVersion'<>'2' OR COALESCE((${table.metadata}#>>'{referralSnapshot,pricing,baseAmountMinor}')::bigint - (${table.metadata}#>>'{referralSnapshot,pricing,discountAmountMinor}')::bigint = (${table.metadata}#>>'{referralSnapshot,pricing,payableAmountMinor}')::bigint AND (${table.metadata}#>>'{referralSnapshot,pricing,discountAmountMinor}')::bigint >=0,false)`,
+    ),
+    check(
+      "purchase_v2_projection_check",
+      sql`${table.metadata}->>'schemaVersion'<>'2' OR COALESCE(${table.metadata}->>'source'='api' AND ${table.metadata}->>'orderId'=${table.businessKey} AND (${table.metadata}->>'orderAmountMinor')::bigint>0 AND ${table.metadata}->>'currency'=${table.metadata}#>>'{referralSnapshot,pricing,currency}' AND ${table.metadata}->>'orderAmountMinor'=${table.metadata}#>>'{referralSnapshot,pricing,payableAmountMinor}' AND ${table.metadata}#>>'{referralSnapshot,schemaVersion}'='1' AND ${table.metadata}#>>'{referralSnapshot,calculationVersion}'='1' AND ${table.metadata}#>>'{referralSnapshot,attribution,productId}'=${table.productId} AND ${table.metadata}#>>'{referralSnapshot,attribution,programId}'=${table.programId} AND ${table.participantId} IS NOT NULL AND ${table.referralId} IS NOT NULL AND ${table.occurredAt} IS NOT NULL,false)`,
+    ),
     // Indexes for performance
     index("event_product_id_idx").on(table.productId),
     index("event_program_id_idx").on(table.programId),
@@ -424,6 +622,11 @@ export const event = pgTable(
     index("event_definition_id_idx").on(table.eventDefinitionId),
     index("event_status_idx").on(table.status),
     index("event_created_at_idx").on(table.createdAt),
+    uniqueIndex("event_business_key_unique_idx").on(
+      table.productId,
+      table.eventDefinitionId,
+      table.businessKey,
+    ),
   ],
 );
 
@@ -433,3 +636,107 @@ export const referralRelations = relations(referral, ({ one }) => ({
     references: [participant.id],
   }),
 }));
+
+export const payout = pgTable(
+  "payout",
+  {
+    ...baseFields("payout"),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "restrict" }),
+    participantId: text("participant_id")
+      .notNull()
+      .references(() => participant.id, { onDelete: "restrict" }),
+    currency: text("currency").notNull(),
+    amountMinor: bigint("amount_minor", { mode: "number" }).notNull(),
+    status: text("status").notNull().default("requested"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    assignedTo: text("assigned_to").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    confirmedBy: text("confirmed_by").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    recipient: jsonb("recipient").notNull().$type<{
+      name: string;
+      details: string;
+      verifiedAt: string;
+      verifiedBy: string;
+    }>(),
+    executionMethod: text("execution_method"),
+    provider: text("provider"),
+    executionNamespace: text("execution_namespace"),
+    externalReference: text("external_reference"),
+    confirmationKey: text("confirmation_key"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    audit: jsonb("audit")
+      .notNull()
+      .$type<
+        Array<{ status: string; actorId: string; at: string; reason?: string }>
+      >(),
+  },
+  (table) => [
+    foreignKey({
+      name: "payout_owner_scope_fk",
+      columns: [table.productId, table.participantId],
+      foreignColumns: [participant.productId, participant.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "payout_request_owner_fk",
+      columns: [table.productId, table.participantId, table.requestedBy],
+      foreignColumns: [
+        participant.productId,
+        participant.id,
+        participant.ownerUserId,
+      ],
+    }).onDelete("restrict"),
+    check(
+      "payout_currency_check",
+      sql`${table.currency} IN ('USD','EUR','GBP','RUB')`,
+    ),
+    check(
+      "payout_amount_minor_check",
+      sql`${table.amountMinor}>0 AND ${table.amountMinor}<=9007199254740991`,
+    ),
+    check(
+      "payout_status_check",
+      sql`${table.status} IN ('requested','processing','completed','rejected')`,
+    ),
+    check(
+      "payout_recipient_check",
+      sql`jsonb_typeof(${table.recipient})='object'`,
+    ),
+    check(
+      "payout_audit_check",
+      sql`jsonb_typeof(${table.audit})='array' AND jsonb_array_length(${table.audit})<=4`,
+    ),
+    check(
+      "payout_completed_fields_check",
+      sql`${table.status}<>'completed' OR (${table.assignedTo} IS NOT NULL AND ${table.confirmedBy} IS NOT NULL AND ${table.executionMethod} IS NOT NULL AND ${table.provider} IS NOT NULL AND ${table.executionNamespace} IS NOT NULL AND ${table.externalReference} IS NOT NULL AND ${table.confirmationKey} IS NOT NULL AND ${table.completedAt} IS NOT NULL)`,
+    ),
+    check(
+      "payout_processing_actor_check",
+      sql`${table.status} NOT IN ('processing','completed') OR ${table.assignedTo} IS NOT NULL`,
+    ),
+    uniqueIndex("payout_request_unique_idx").on(
+      table.productId,
+      table.participantId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("payout_external_reference_unique_idx").on(
+      table.executionNamespace,
+      table.provider,
+      table.externalReference,
+    ),
+    index("payout_owner_currency_status_date_idx").on(
+      table.productId,
+      table.participantId,
+      table.currency,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);

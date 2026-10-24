@@ -44,39 +44,44 @@ import {
   AlertDialogCancel,
 } from "@refref/ui/components/alert-dialog";
 import { DateDisplay } from "@/components/date-display";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs, type RouterOutputs } from "@/trpc/react";
 
-// Define the types for our referral program
-export type ProgramStatus = "pending_setup" | "active" | "inactive";
-
-interface Program {
-  id: string;
-  name: string;
-  status: ProgramStatus;
-  participantCount?: number;
-  referralCount?: number;
-  createdAt: Date;
-}
+type Program = RouterOutputs["program"]["getAll"][number];
 
 interface ProgramCardProps {
   program: Program;
+  scope: Exclude<RouterInputs["program"]["getAll"], void>["scope"];
+  canManage: boolean;
 }
 
 // Individual card component
-export function ProgramCard({ program }: ProgramCardProps) {
+export function ProgramCard({ program, scope, canManage }: ProgramCardProps) {
   const router = useRouter();
   const utils = api.useUtils();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const deleteProgram = api.program.delete.useMutation({
-    onSuccess: () => {
-      setDeleteDialogOpen(false);
-      utils.program.getAll.invalidate();
+    onSettled: (_result, _error, variables) => {
+      void utils.program.getById.invalidate({
+        id: variables.id,
+        scope: {
+          userId: scope.userId,
+          organizationId: scope.organizationId,
+        },
+      });
+      void utils.rewardRules.getByProgram.invalidate({
+        programId: variables.id,
+        scope: {
+          userId: scope.userId,
+          organizationId: scope.organizationId,
+        },
+      });
+      void utils.program.getAll.invalidate();
     },
   });
 
   // Status badge styling and content based on status
-  const getStatusBadge = (status: ProgramStatus) => {
+  const getStatusBadge = (status: Program["status"]) => {
     switch (status) {
       case "active":
         return (
@@ -89,13 +94,14 @@ export function ProgramCard({ program }: ProgramCardProps) {
           </Badge>
         );
       case "pending_setup":
+      case "pending_approval":
         return (
           <Badge
             variant="outline"
             className="bg-amber-50 text-amber-800 hover:bg-amber-100 border-amber-200"
           >
             <Clock className="w-3.5 h-3.5 mr-1" />
-            Setup Pending
+            {status === "pending_setup" ? "Setup Pending" : "Approval Required"}
           </Badge>
         );
       case "inactive":
@@ -108,6 +114,8 @@ export function ProgramCard({ program }: ProgramCardProps) {
             Inactive
           </Badge>
         );
+      case "archived":
+        return <Badge variant="secondary">Archived</Badge>;
       default:
         return null;
     }
@@ -179,17 +187,21 @@ export function ProgramCard({ program }: ProgramCardProps) {
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteDialogOpen(true);
-                    }}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
+                  {canManage && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteDialogOpen(true);
+                        }}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Remove program
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -256,13 +268,16 @@ export function ProgramCard({ program }: ProgramCardProps) {
         </CardFooter>
       )}
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <AlertDialog
+        open={canManage && deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+      >
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Program</AlertDialogTitle>
+            <AlertDialogTitle>Remove Program</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{program.name}"? This action
-              cannot be undone.
+              Remove "{program.name}"? Programs with codes or history are
+              archived; empty programs are deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -270,10 +285,19 @@ export function ProgramCard({ program }: ProgramCardProps) {
             <Button
               type="button"
               variant="destructive"
-              onClick={() => deleteProgram.mutate({ id: program.id })}
+              onClick={() =>
+                deleteProgram.mutate(
+                  { id: program.id },
+                  {
+                    onSuccess: () => {
+                      setDeleteDialogOpen(false);
+                    },
+                  },
+                )
+              }
               disabled={deleteProgram.isPending}
             >
-              {deleteProgram.isPending ? "Deleting..." : "Delete"}
+              {deleteProgram.isPending ? "Removing..." : "Confirm removal"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

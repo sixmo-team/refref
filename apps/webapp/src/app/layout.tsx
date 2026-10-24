@@ -1,23 +1,12 @@
 import "@/styles/app.css";
 import Script from "next/script";
 import { GeistSans } from "geist/font/sans";
-import { Stack_Sans_Notch } from "next/font/google";
 import { type Metadata } from "next";
 import { ThemeProvider } from "next-themes";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 
 import { TRPCReactProvider } from "@/trpc/react";
 import { AuthUIProvider } from "@/components/providers/auth-ui-provider";
-import { PostHogProvider } from "@/components/providers/posthog-provider";
-import { env } from "@/env";
-
-const stackSansNotch = Stack_Sans_Notch({
-  weight: "300",
-  subsets: ["latin"],
-  variable: "--font-stack-sans-notch",
-  display: "swap",
-  adjustFontFallback: false,
-});
 
 export const metadata: Metadata = {
   title: "RefRef - Referral Management Platform",
@@ -35,13 +24,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${stackSansNotch.variable}`}
+      className={GeistSans.variable}
       suppressHydrationWarning
     >
       <head>
         <Script
           suppressHydrationWarning
-          src={`${env.NEXT_PUBLIC_ASSETS_URL}/attribution.v1.js`}
+          src="/assets/attribution.v1.js"
           strategy="afterInteractive"
         />
         <Script
@@ -55,7 +44,7 @@ export default function RootLayout({
         />
         <Script
           suppressHydrationWarning
-          src={`${env.NEXT_PUBLIC_ASSETS_URL}/widget.v1.js`}
+          src="/assets/widget.v1.js"
           strategy="afterInteractive"
         />
       </head>
@@ -68,9 +57,7 @@ export default function RootLayout({
         >
           <TRPCReactProvider>
             <AuthUIProvider>
-              <PostHogProvider>
-                <NuqsAdapter>{children}</NuqsAdapter>
-              </PostHogProvider>
+              <NuqsAdapter>{children}</NuqsAdapter>
             </AuthUIProvider>
           </TRPCReactProvider>
         </ThemeProvider>

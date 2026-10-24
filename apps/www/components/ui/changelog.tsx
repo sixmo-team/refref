@@ -88,6 +88,23 @@ export default Changelog;
 
 export const defaultChangelogData: ChangelogEntry[] = [
   {
+    version: "Unreleased — activation gated",
+    date: "22 October 2026",
+    title: "Native first-referral-payment tracking and manual payouts",
+    description:
+      "Implementation for coordinated acceptance; not a production program activation or a claim of completed bank verification.",
+    items: [
+      "Shared Single-Sided/Double-Sided configuration, exact versioned money and RUB alongside existing currencies.",
+      "Protected read-only code resolution and atomic snapshot-based purchase tracking, preserving legacy major-unit consumers.",
+      "Existing Activity extended with purchase amount, code and native attribution; verified own earnings and provider-neutral manual payout requests.",
+      "Explicit business/ownership approval, scoped financial history, reservations and manual payment/refund review before payout.",
+      "Retain ordinary Single-Sided V1 activation and original API/web percentage fallbacks; reward-only saves preserve custom design and rules.",
+      "Forward the manual execution namespace through native Turbo runtime environment handling, without weakening scoped financial approval.",
+      "Encapsulate template validation, form mapping and rule capabilities in the existing static registry; keep first-paid versus recurring policy programme-specific.",
+      "Support independently enabled buyer-only discounts with explicit currency and no synthetic cash reward; promoters need only a verified RefRef identity, not an AI-marketer account.",
+    ],
+  },
+  {
     version: "Version 0.1.0",
     date: "28 April 2025",
     title: "RefRef 0.1 coming soon!",

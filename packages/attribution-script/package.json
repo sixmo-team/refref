@@ -8,9 +8,9 @@
   "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/types/index.d.ts",
       "import": "./dist/attribution-script.es.js",
-      "require": "./dist/attribution-script.umd.js",
-      "types": "./dist/types/index.d.ts"
+      "require": "./dist/attribution-script.umd.js"
     },
     "./dist/*": "./dist/*"
   },
@@ -19,12 +19,12 @@
   ],
   "scripts": {
     "dev": "vite --port 5174",
-    "build": "infisical run --env=dev -- vite build --mode development || vite build --mode development",
-    "build:prod": "infisical run --env=prod -- vite build --mode production || vite build --mode production",
+    "build": "vite build --mode production",
+    "build:prod": "vite build --mode production",
     "clean": "rm -rf dist src/**/*.js src/**/*.js.map",
     "lint": "eslint . --report-unused-disable-directives",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --maxWorkers=1",
+    "test:watch": "vitest --maxWorkers=1",
     "preview": "vite preview",
     "type:check": "tsc --noEmit"
   },
@@ -38,10 +38,10 @@
   "devDependencies": {
     "@refref/eslint-config": "workspace:*",
     "@refref/typescript-config": "workspace:*",
-    "jsdom": "^25.0.0",
-    "typescript": "^5.9.2",
-    "vite": "^6.3.3",
-    "vite-plugin-dts": "^3.7.0",
-    "vitest": "^3.1.4"
+    "jsdom": "^25.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4",
+    "vite-plugin-dts": "^5.1.2",
+    "vitest": "^4.1.12"
   }
 }

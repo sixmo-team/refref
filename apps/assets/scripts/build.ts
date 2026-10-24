@@ -198,7 +198,7 @@ async function build() {
     console.log("   1. Deploy: pnpm -F @refref/assets deploy:cloudflare");
     console.log("   2. Verify: https://refref-assets.<account>.workers.dev");
     console.log("   3. Configure custom domain (optional)");
-    console.log("   4. Update NEXT_PUBLIC_ASSETS_URL in webapp\n");
+    console.log("   4. Publish the bundles through the webapp's same-origin /assets route\n");
   } catch (error) {
     console.error("❌ Build failed:", error);
     process.exit(1);

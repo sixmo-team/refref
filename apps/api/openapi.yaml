@@ -1,18 +1,19 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: RefRef API
-  description: API for RefRef referral program management platform
+  description: >-
+    Native RefRef tracking and referral first-payment API. Gateway adds /tracking prefix. V1 purchase remains
+    major-unit; V2 is explicit minor-unit with immutable accepted terms. Event processing is not approval or payout. No
+    automatic delivery/retry or refund accounting is promised.
   version: 0.1.0
   contact:
     name: RefRef Team
     url: https://github.com/refrefhq/refref
-
 servers:
-  - url: http://localhost:3001
-    description: Local development server
-  - url: https://api.refref.ai
-    description: Production server
-
+  - url: http://127.0.0.1:4310/tracking
+    description: Local restricted gateway
+  - url: http://refref-gateway:8080/tracking
+    description: Optional private HTTP-only service network
 paths:
   /:
     get:
@@ -22,12 +23,12 @@ paths:
       tags:
         - Health
       responses:
-        '200':
+        "200":
           description: All services are healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
               examples:
                 healthy:
                   value:
@@ -38,12 +39,12 @@ paths:
                         ok: true
                       database:
                         ok: true
-        '503':
+        "503":
           description: One or more services are unhealthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
               examples:
                 unhealthy:
                   value:
@@ -55,7 +56,6 @@ paths:
                       database:
                         ok: false
                         error: connection refused
-
   /health:
     get:
       summary: Health check
@@ -64,12 +64,12 @@ paths:
       tags:
         - Health
       responses:
-        '200':
+        "200":
           description: All services are healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
               examples:
                 healthy:
                   value:
@@ -80,12 +80,12 @@ paths:
                         ok: true
                       database:
                         ok: true
-        '503':
+        "503":
           description: One or more services are unhealthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
               examples:
                 unhealthy:
                   value:
@@ -97,7 +97,372 @@ paths:
                       database:
                         ok: false
                         error: connection refused
-
+  /v1/referrals/resolve:
+    post:
+      operationId: resolveReferralCode
+      tags:
+        - Tracking
+      summary: resolveReferralCode
+      description: >-
+        Read-only business lookup. Normalizes trim/lowercase seven-character alphanumeric code, not vanity URL. No
+        participant/referral/event/reward writes. Approved G1/G2 terms and independently verified native account
+        ownership required. One response contains independent discount and frozen cash commission specs; no buyer PII.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        description: JSON only; maximum 256 KiB. No bank secrets or raw bank documents.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveReferralRequest"
+      responses:
+        "200":
+          description: Validated native result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReferralCodeResolution"
+        "400":
+          description: Invalid body or contract version
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "401":
+          description: API key required or invalid
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "403":
+          description: Organization/product/program/operation scope denied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "404":
+          description: Code not found
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "409":
+          description: First-purchase, self-referral, or immutable order conflict
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "413":
+          description: Body exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "415":
+          description: JSON content type required
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "422":
+          description: Inactive code or conditions/activation gates not satisfied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "429":
+          description: Native service-key quota exceeded; Retry-After applies
+          headers:
+            Retry-After:
+              description: Seconds before quota retry; caller must not auto-retry preview
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "500":
+          description: Native unexpected server or serialization error
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "503":
+          description: Referral service unavailable
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+  /v1/track/purchase:
+    post:
+      operationId: trackPurchase
+      tags:
+        - Tracking
+      summary: trackPurchase
+      description: >-
+        Existing purchase endpoint: V1 orderAmount is major units for unrelated legacy programs. V1 ignores unknown
+        fields, including customer, without profile writes; V2 money fields cannot be mixed into V1.
+        V2 orderAmountMinor is paid minor units and must match full snapshot. One native V2 transaction upserts the
+        product/external-ID participant, updates required customer name/email, and records exact code attribution,
+        event/first-paid claim and complete frozen rewards. Customer changes do not change V2 financial replay identity.
+        Same product/order with changed
+        owner/program/terms/time is 409; exact replay returns original IDs/results and duplicate=true even after
+        archival. timestamp is original verified confirmation time, not retry time. Frozen rules are not live-rebuilt.
+        ACK customerExternalId and codeId come from verified purchase/attribution associations.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        description: JSON only; maximum 256 KiB. No bank secrets or raw bank documents.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/MinorPurchaseRequest"
+                - $ref: "#/components/schemas/LegacyPurchaseRequest"
+      responses:
+        "200":
+          description: Validated native result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MinorPurchaseResponse"
+                  - $ref: "#/components/schemas/LegacyTrackingResponse"
+        "400":
+          description: Invalid body or contract version
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "401":
+          description: API key required or invalid
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "403":
+          description: Organization/product/program/operation scope denied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "404":
+          description: Code not found
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "409":
+          description: First-purchase, self-referral, or immutable order conflict
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "413":
+          description: Body exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "415":
+          description: JSON content type required
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "422":
+          description: Inactive code or conditions/activation gates not satisfied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "429":
+          description: Native service-key quota exceeded; Retry-After applies
+          headers:
+            Retry-After:
+              description: Seconds before quota retry; caller must not auto-retry preview
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "500":
+          description: Native unexpected server or serialization error
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "503":
+          description: Referral service unavailable
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+  /v1/track/signup:
+    post:
+      operationId: trackSignup
+      tags:
+        - Tracking
+      summary: trackSignup
+      description: >-
+        Legacy signup tracking with refcode without cookie. Not a resolve/preview operation. Cannot award the
+        first-payment server scenario and must not be called before purchase to attach a discount.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        description: JSON only; maximum 256 KiB. No bank secrets or raw bank documents.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupTrackingRequest"
+      responses:
+        "200":
+          description: Validated native result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyTrackingResponse"
+        "400":
+          description: Invalid body or contract version
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "401":
+          description: API key required or invalid
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "403":
+          description: Organization/product/program/operation scope denied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "404":
+          description: Code not found
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "409":
+          description: First-purchase, self-referral, or immutable order conflict
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "413":
+          description: Body exceeds 256 KiB
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "415":
+          description: JSON content type required
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "422":
+          description: Inactive code or conditions/activation gates not satisfied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "429":
+          description: Native service-key quota exceeded; Retry-After applies
+          headers:
+            Retry-After:
+              description: Seconds before quota retry; caller must not auto-retry preview
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "500":
+          description: Native unexpected server or serialization error
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
+        "503":
+          description: Referral service unavailable
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReferralError"
+                  - $ref: "#/components/schemas/NativeHttpError"
 components:
   schemas:
     HealthResponse:
@@ -122,10 +487,9 @@ components:
             - database
           properties:
             api:
-              $ref: '#/components/schemas/HealthCheck'
+              $ref: "#/components/schemas/HealthCheck"
             database:
-              $ref: '#/components/schemas/HealthCheck'
-
+              $ref: "#/components/schemas/HealthCheck"
     HealthCheck:
       type: object
       required:
@@ -138,7 +502,778 @@ components:
           type: string
           description: Error message if the check failed
           example: connection timeout
-
+    ReferralCodeResolution:
+      type: object
+      properties:
+        codeId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        canonicalCode:
+          type: string
+          pattern: ^[a-z0-9]{7}$
+        productId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        programId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        referrerParticipantId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        referrerDisplayName:
+          type: string
+          maxLength: 100
+        firstPaidOnly:
+          type: boolean
+        currency:
+          type: string
+          enum:
+            - USD
+            - EUR
+            - GBP
+            - RUB
+        buyerDiscount:
+          $ref: "#/components/schemas/BuyerDiscountSpec"
+        commission:
+          $ref: "#/components/schemas/FrozenCommission"
+        calculationVersion:
+          type: number
+          enum:
+            - 1
+      required:
+        - codeId
+        - canonicalCode
+        - productId
+        - programId
+        - referrerParticipantId
+        - firstPaidOnly
+        - currency
+        - buyerDiscount
+        - commission
+        - calculationVersion
+      additionalProperties: false
+    ResolveReferralRequest:
+      type: object
+      properties:
+        productId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        programId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        customerExternalId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        code:
+          type: string
+          maxLength: 64
+          pattern: ^\s*[A-Za-z0-9]{7}\s*$
+      required:
+        - productId
+        - programId
+        - customerExternalId
+        - code
+      additionalProperties: false
+    ReferralSnapshotV1:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
+        calculationVersion:
+          type: number
+          enum:
+            - 1
+        acceptedAt:
+          type: string
+          format: date-time
+          pattern: >-
+            ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        offerVersion:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        attribution:
+          type: object
+          properties:
+            productId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+            programId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+            codeId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+            codeValue:
+              type: string
+              pattern: ^[a-z0-9]{7}$
+            referrerParticipantId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+          required:
+            - productId
+            - programId
+            - codeId
+            - codeValue
+            - referrerParticipantId
+          additionalProperties: false
+        firstPaidOnly:
+          type: boolean
+        pricing:
+          type: object
+          properties:
+            planCode:
+              type: string
+              minLength: 1
+              maxLength: 100
+            priceVersion:
+              type: string
+              minLength: 1
+              maxLength: 200
+            currency:
+              type: string
+              enum:
+                - USD
+                - EUR
+                - GBP
+                - RUB
+            baseAmountMinor:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            discountAmountMinor:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            payableAmountMinor:
+              type: integer
+              exclusiveMinimum: true
+              maximum: 9007199254740991
+              minimum: 0
+            buyerDiscountApplicable:
+              type: boolean
+            buyerDiscountReason:
+              type: string
+              maxLength: 200
+              nullable: true
+          required:
+            - planCode
+            - priceVersion
+            - currency
+            - baseAmountMinor
+            - discountAmountMinor
+            - payableAmountMinor
+            - buyerDiscountApplicable
+            - buyerDiscountReason
+          additionalProperties: false
+        buyerDiscount:
+          $ref: "#/components/schemas/BuyerDiscountSpec"
+        commission:
+          $ref: "#/components/schemas/FrozenCommission"
+      required:
+        - schemaVersion
+        - calculationVersion
+        - acceptedAt
+        - offerVersion
+        - attribution
+        - firstPaidOnly
+        - pricing
+        - buyerDiscount
+        - commission
+      additionalProperties: false
+      description: >-
+        Immutable D1 accepted terms: exact rational calculationVersion1, half-up once at final minor boundary, fixed
+        native major amounts at most two decimals, percentages at most six. Frozen rule firstPaidOnly must equal root
+        policy; commission currency must equal purchase currency. Base minus exact discount equals positive payable.
+        G1/G2 rates, dates/minimums, basis and edge examples require explicit approval; backend additionally requires
+        RUB/true. JSONB key order is not a financial fingerprint.
+    PurchaseEventMetadataV2:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 2
+        source:
+          type: string
+          enum:
+            - api
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        orderAmountMinor:
+          type: integer
+          exclusiveMinimum: true
+          maximum: 9007199254740991
+          minimum: 0
+        currency:
+          type: string
+          enum:
+            - USD
+            - EUR
+            - GBP
+            - RUB
+        referralSnapshot:
+          $ref: "#/components/schemas/ReferralSnapshotV1"
+      required:
+        - schemaVersion
+        - source
+        - orderId
+        - orderAmountMinor
+        - currency
+        - referralSnapshot
+      additionalProperties: false
+    MinorPurchaseRequest:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          pattern: >-
+            ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        productId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        programId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        payload:
+          type: object
+          properties:
+            userId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+            orderId:
+              type: string
+              minLength: 1
+              maxLength: 200
+              pattern: ^[A-Za-z0-9_-]+$
+            orderAmountMinor:
+              type: integer
+              exclusiveMinimum: true
+              maximum: 9007199254740991
+              minimum: 0
+            currency:
+              type: string
+              enum:
+                - USD
+                - EUR
+                - GBP
+                - RUB
+            customer:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                email:
+                  type: string
+                  maxLength: 320
+                  format: email
+                  pattern: >-
+                    ^(?:[A-Za-z0-9_'+\-]+\.)*[A-Za-z0-9_'+\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+              required:
+                - name
+                - email
+              additionalProperties: false
+            referralSnapshot:
+              $ref: "#/components/schemas/ReferralSnapshotV1"
+          required:
+            - userId
+            - orderId
+            - orderAmountMinor
+            - currency
+            - customer
+            - referralSnapshot
+          additionalProperties: false
+      required:
+        - timestamp
+        - productId
+        - programId
+        - payload
+      additionalProperties: false
+    MinorPurchaseResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        message:
+          type: string
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        productId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        programId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        codeId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        customerExternalId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        participantId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        referralId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        referrerParticipantId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9_-]+$
+        rewardIds:
+          maxItems: 32
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9_-]+$
+        rewards:
+          maxItems: 32
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                minLength: 1
+                maxLength: 200
+                pattern: ^[A-Za-z0-9_-]+$
+              ruleId:
+                type: string
+                minLength: 1
+                maxLength: 200
+                pattern: ^[A-Za-z0-9_-]+$
+              participantId:
+                type: string
+                minLength: 1
+                maxLength: 200
+                pattern: ^[A-Za-z0-9_-]+$
+              type:
+                type: string
+                enum:
+                  - cash
+              amountMinor:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              currency:
+                type: string
+                enum:
+                  - USD
+                  - EUR
+                  - GBP
+                  - RUB
+              config:
+                $ref: "#/components/schemas/FrozenCommissionRuleConfigV1"
+            required:
+              - id
+              - ruleId
+              - participantId
+              - type
+              - amountMinor
+              - currency
+              - config
+            additionalProperties: false
+        duplicate:
+          type: boolean
+      required:
+        - success
+        - message
+        - eventId
+        - productId
+        - programId
+        - orderId
+        - codeId
+        - customerExternalId
+        - participantId
+        - referralId
+        - referrerParticipantId
+        - rewardIds
+        - rewards
+        - duplicate
+      additionalProperties: false
+      description: >-
+        Complete exact frozen rule/config set including zero rounded cash rewards. rewardIds uniquely equal rewards.id
+        set; recipients equal frozen referrer. codeId is actual native referral.refcodeId; customerExternalId is
+        verified purchase payload.userId. Product/program/order/buyer/referral/code/reward associations and amounts are
+        transaction-checked. Generated is not approved, withdrawable or transferred.
+    LegacyPurchaseRequest:
+      type: object
+      description: Unknown fields are ignored; customer does not update profiles. V2 money fields are forbidden.
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          pattern: >-
+            ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        productId:
+          type: string
+          minLength: 1
+        programId:
+          type: string
+        payload:
+          type: object
+          properties:
+            userId:
+              type: string
+              minLength: 1
+            orderAmount:
+              type: number
+              exclusiveMinimum: true
+              minimum: 0
+            orderId:
+              type: string
+              minLength: 1
+              maxLength: 200
+            productIds:
+              type: array
+              items:
+                type: string
+            currency:
+              default: USD
+              type: string
+            orderAmountMinor:
+              not: {}
+            referralSnapshot:
+              not: {}
+          required:
+            - userId
+            - orderAmount
+            - orderId
+          additionalProperties: true
+      required:
+        - timestamp
+        - productId
+        - payload
+      additionalProperties: true
+    SignupTrackingRequest:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          pattern: >-
+            ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        productId:
+          type: string
+          minLength: 1
+        programId:
+          type: string
+        payload:
+          type: object
+          properties:
+            userId:
+              type: string
+              minLength: 1
+            name:
+              type: string
+              maxLength: 200
+            email:
+              type: string
+              maxLength: 320
+              format: email
+              pattern: ^(?:[A-Za-z0-9_'+\-]+\.)*[A-Za-z0-9_'+\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+            refcode:
+              type: string
+          required:
+            - userId
+      required:
+        - timestamp
+        - productId
+        - payload
+    BuyerDiscountSpec:
+      oneOf:
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - none
+          required:
+            - kind
+          additionalProperties: false
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - fixed
+            amountMinor:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            minPurchaseAmountMinor:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+          required:
+            - kind
+            - amountMinor
+            - minPurchaseAmountMinor
+          additionalProperties: false
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - percent
+            percentDecimal:
+              type: string
+              pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$
+            minPurchaseAmountMinor:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+              nullable: true
+          required:
+            - kind
+            - percentDecimal
+            - minPurchaseAmountMinor
+          additionalProperties: false
+    FrozenCommission:
+      type: object
+      properties:
+        basis:
+          type: string
+          nullable: true
+          enum:
+            - base_amount
+            - payable_amount
+            - null
+        rules:
+          maxItems: 32
+          type: array
+          items:
+            type: object
+            properties:
+              ruleId:
+                type: string
+                minLength: 1
+                maxLength: 200
+                pattern: ^[A-Za-z0-9_-]+$
+              priority:
+                type: integer
+                minimum: -9007199254740991
+                maximum: 9007199254740991
+              config:
+                $ref: "#/components/schemas/FrozenCommissionRuleConfigV1"
+            required:
+              - ruleId
+              - priority
+              - config
+            additionalProperties: false
+      required:
+        - basis
+        - rules
+      additionalProperties: false
+      description: A disabled commission has null basis and no rules; nonempty rules require an explicit calculation basis.
+      oneOf:
+        - properties:
+            basis:
+              enum:
+                - null
+            rules:
+              maxItems: 0
+        - properties:
+            basis:
+              enum:
+                - base_amount
+                - payable_amount
+            rules:
+              minItems: 1
+    FrozenCommissionRuleConfigV1:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
+        trigger:
+          type: object
+          properties:
+            event:
+              type: string
+              enum:
+                - purchase
+          required:
+            - event
+          additionalProperties: false
+        participantType:
+          type: string
+          enum:
+            - referrer
+        conditions:
+          type: object
+          properties:
+            firstPaidOnly:
+              type: boolean
+          required:
+            - firstPaidOnly
+          additionalProperties: false
+        reward:
+          type: object
+          properties:
+            type:
+              type: string
+              enum:
+                - cash
+            amount:
+              type: number
+              minimum: 0
+            unit:
+              type: string
+              enum:
+                - fixed
+                - percent
+            currency:
+              type: string
+              enum:
+                - USD
+                - EUR
+                - GBP
+                - RUB
+            minPurchaseAmount:
+              type: number
+              minimum: 0
+            validityDays:
+              type: integer
+              exclusiveMinimum: true
+              maximum: 9007199254740991
+              minimum: 0
+          required:
+            - type
+            - amount
+            - unit
+            - currency
+          additionalProperties: false
+      required:
+        - schemaVersion
+        - trigger
+        - participantType
+        - reward
+      additionalProperties: false
+    LegacyTrackingResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+        - message
+        - eventId
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        message:
+          type: string
+        eventId:
+          type: string
+          minLength: 1
+    ReferralError:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+        - message
+        - code
+        - statusCode
+      properties:
+        success:
+          type: boolean
+          enum:
+            - false
+        message:
+          type: string
+        code:
+          type: string
+        statusCode:
+          type: integer
+    NativeHttpError:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        code:
+          type: string
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+      additionalProperties: false
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >-
+        Organization-owned service key. Resolve/minor purchase additionally require referrals resolve/purchase
+        permissions and metadata.referralScope matching explicit productId/programId. Widget JWT/session is not sale
+        authorization.
 tags:
   - name: Health
     description: Health check endpoints
+  - name: Tracking
+    description: Protected native signup, purchase and read-only referral code resolution

@@ -8,21 +8,21 @@
     "build": "tsx scripts/build.ts",
     "build:prod": "tsx scripts/build.ts --prod",
     "clean": "rm -rf public/*.js public/*.map",
-    "dev": "infisical run --env=dev -- concurrently \"tsx scripts/build.ts --watch\" \"wrangler dev --port 8787\" || concurrently \"tsx scripts/build.ts --watch\" \"wrangler dev --port 8787\"",
+    "dev": "concurrently \"tsx scripts/build.ts --watch\" \"wrangler dev --port 8787\"",
     "deploy:cloudflare": "pnpm build:prod && wrangler deploy",
     "deploy:cloudflare:dev": "pnpm build && wrangler deploy --env dev"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250115.0",
+    "@cloudflare/workers-types": "^5.20261019.1",
     "@refref/attribution-script": "workspace:*",
     "@refref/typescript-config": "workspace:*",
     "@refref/widget": "workspace:*",
-    "@types/node": "^24.9.1",
-    "chokidar": "^4.0.1",
-    "concurrently": "^9.1.0",
-    "execa": "^9.5.2",
-    "tsx": "^4.7.1",
-    "typescript": "^5.9.2",
-    "wrangler": "^4.0.0"
+    "@types/node": "^24.19.2",
+    "chokidar": "^4.0.3",
+    "concurrently": "^9.2.5",
+    "execa": "^9.6.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.2"
   }
 }

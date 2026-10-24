@@ -100,7 +100,7 @@ class CommandQueue {
         try {
           await (fn as Function).call(this.refRef, ...args);
         } catch (error) {
-          console.error(`Error executing command ${method}:`, error);
+          console.error("RefRef command execution failed");
         }
       }
     }

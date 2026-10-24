@@ -1,13 +1,20 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "concurrency": "100",
+  "concurrency": "1",
+  "globalPassThroughEnv": [
+    "NODE_OPTIONS",
+    "SWC_NATIVE_BINDING_CACHE",
+    "CI",
+    "NEXT_TELEMETRY_DISABLED",
+    "TURBO_TELEMETRY_DISABLED",
+    "PAYOUT_MANUAL_EXECUTION_NAMESPACE",
+    "DO_NOT_TRACK"
+  ],
   "globalEnv": [
-    "INFISICAL_TOKEN",
     "BETTER_AUTH_SECRET",
     "DATABASE_URL",
     "NEXT_PUBLIC_APP_URL",
-    "NEXT_PUBLIC_ASSETS_URL",
     "BETTER_AUTH_URL",
     "NODE_ENV",
     "RESEND_API_KEY",

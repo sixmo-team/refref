@@ -1,38 +1,15 @@
+import { parseCookies } from "better-call";
+
 /**
  * Cookie utilities for extracting referral codes from HTTP requests
  */
-
-/**
- * Parse cookie string into key-value pairs
- */
-export function parseCookieString(
-  cookieString: string,
-): Record<string, string> {
-  const cookies: Record<string, string> = {};
-
-  if (!cookieString) {
-    return cookies;
-  }
-
-  // Split by semicolon and process each cookie
-  cookieString.split(";").forEach((cookie) => {
-    const [name, ...valueParts] = cookie.trim().split("=");
-    if (name) {
-      // Join value parts in case value contains '='
-      const value = valueParts.join("=");
-      cookies[name] = decodeURIComponent(value || "");
-    }
-  });
-
-  return cookies;
-}
 
 /**
  * Extract referral code from request headers
  */
 export function extractRefcodeFromRequest(
   request: Request | { headers?: Headers | Record<string, string> },
-  cookieName: string = "refref_refcode",
+  cookieName: string = "refref-refcode",
 ): string | undefined {
   let cookieString: string | undefined;
 
@@ -45,39 +22,28 @@ export function extractRefcodeFromRequest(
       // Plain object headers
       cookieString = request.headers["cookie"] || request.headers["Cookie"];
     }
-  } else if (request instanceof Request) {
-    // Native Request object
-    cookieString = request.headers.get("cookie") || undefined;
   }
 
   if (!cookieString) {
     return undefined;
   }
 
-  const cookies = parseCookieString(cookieString);
-  const refcode = cookies[cookieName];
-
-  // Validate refcode format (basic validation)
-  if (refcode && refcode.length > 0) {
-    return refcode;
-  }
-
-  return undefined;
+  return parseCookies(cookieString).get(cookieName) || undefined;
 }
 
 /**
- * Extract referral code from Better Auth context
- * Better Auth provides the request in the hook context
+ * Read the endpoint's effective headers, including direct server API calls
+ * which do not construct a Request.
  */
 export function extractRefcodeFromContext(
   context: {
     request?: Request | { headers?: Headers | Record<string, string> };
+    headers?: Headers | Record<string, string>;
   },
-  cookieName: string = "refref_refcode",
+  cookieName?: string,
 ): string | undefined {
-  if (!context.request) {
-    return undefined;
-  }
-
-  return extractRefcodeFromRequest(context.request, cookieName);
+  return extractRefcodeFromRequest(
+    context.headers ? context : (context.request ?? context),
+    cookieName,
+  );
 }

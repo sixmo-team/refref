@@ -8,9 +8,9 @@
   "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/types/index.d.ts",
       "import": "./dist/widget.es.js",
-      "require": "./dist/widget.umd.js",
-      "types": "./dist/types/index.d.ts"
+      "require": "./dist/widget.umd.js"
     },
     "./dist/*": "./dist/*"
   },
@@ -18,9 +18,9 @@
     "dist"
   ],
   "scripts": {
-    "dev": "infisical run --env=dev vite || vite",
-    "build": "infisical run --env=dev -- vite build --mode development || vite build --mode development",
-    "build:prod": "infisical run --env=prod -- vite build --mode production || vite build --mode production",
+    "dev": "vite",
+    "build": "vite build --mode production",
+    "build:prod": "vite build --mode production",
     "build:widget": "vite build --out-dir dist/widget --mode development",
     "build:widget:production": "vite build --out-dir dist/widget --mode production",
     "lint": "eslint . --report-unused-disable-directives",
@@ -32,21 +32,21 @@
     "@refref/ui": "workspace:*",
     "clsx": "^2.1.1",
     "lucide-react": "^0.483.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.0.2",
-    "zustand": "^5.0.3"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.0",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@refref/eslint-config": "workspace:*",
     "@refref/typescript-config": "workspace:*",
-    "@tailwindcss/vite": "^4.0.14",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^4.2.1",
-    "typescript": "^5.9.2",
-    "vite": "^6.3.3",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4",
     "vite-plugin-css-injected-by-js": "^3.5.2",
-    "vite-plugin-dts": "^3.7.0"
+    "vite-plugin-dts": "^5.1.2"
   }
 }

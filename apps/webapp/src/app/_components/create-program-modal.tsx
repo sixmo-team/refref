@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
 import {
   Dialog,
   DialogContent,
@@ -73,16 +73,21 @@ function getTemplateVisual(templateName: string) {
   return DoubleSidedVisual;
 }
 
-export function CreateProgramModalV2() {
+export function CreateProgramModalV2({
+  scope,
+}: {
+  scope: Exclude<RouterInputs["program"]["getAll"], void>["scope"];
+}) {
   const [open, setOpen] = useState(false);
-  const [showSetup, setShowSetup] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(
     null,
   );
   const router = useRouter();
 
-  const { data: templates } = api.program.listTemplates.useQuery();
-  const { data: existingPrograms } = api.program.getAll.useQuery();
+  const templateQuery = api.program.listTemplates.useQuery();
+  const templates = templateQuery.data;
+  const existing = api.program.getAll.useQuery({ scope });
+  const existingPrograms = existing.data;
 
   // Create a set of used template IDs for quick lookup
   const usedTemplateIds = new Set(
@@ -90,36 +95,48 @@ export function CreateProgramModalV2() {
   );
 
   // Mutation to create program
+  const utils = api.useUtils();
   const createProgram = api.program.create.useMutation({
-    onSuccess: (data) => {
-      setOpen(false);
-      toast.success("Program created successfully!");
-      router.push(`/programs/${data.id}/setup`);
-    },
-    onError: (error) => {
-      toast.error(`Failed to create program: ${error.message}`);
+    onSettled: () => {
+      void utils.program.getAll.invalidate();
     },
   });
 
   const handleTemplateSelect = (template: Template) => {
     // Check if template is already used
-    if (usedTemplateIds.has(template.id)) {
+    if (
+      !existingPrograms ||
+      existing.isError ||
+      usedTemplateIds.has(template.id)
+    ) {
       return; // Don't allow selection of already used template
     }
 
     setSelectedTemplate(template);
-    createProgram.mutate({
-      name: template.templateName,
-      description: "",
-      templateId: template.id,
-    });
+    createProgram.mutate(
+      {
+        productId: scope.productId,
+        name: template.templateName,
+        description: "",
+        templateId: template.id,
+      },
+      {
+        onSuccess: (data) => {
+          setOpen(false);
+          toast.success("Program created successfully!");
+          router.push(`/programs/${data.id}/setup`);
+        },
+        onError: (error) =>
+          toast.error(`Failed to create program: ${error.message}`),
+      },
+    );
   };
 
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button size="sm">
+          <Button size="sm" disabled={!existingPrograms || existing.isError}>
             <IconPlus className="mr-2 h-4 w-4" />
             Create Program
           </Button>
@@ -128,6 +145,27 @@ export function CreateProgramModalV2() {
           <DialogHeader>
             <DialogTitle>Choose a Program Template</DialogTitle>
           </DialogHeader>
+          {existing.isError && (
+            <div role="alert">
+              Unable to load product programs.{" "}
+              <Button variant="outline" onClick={() => void existing.refetch()}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {templateQuery.isLoading && <p>Loading program templates…</p>}
+          {templateQuery.isError && (
+            <div role="alert">
+              Unable to load program templates.{" "}
+              <Button
+                variant="outline"
+                disabled={templateQuery.isFetching}
+                onClick={() => void templateQuery.refetch()}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
           <TooltipProvider>
             <div className="grid grid-cols-2 gap-4">
               {templates?.map((template) => {
@@ -143,81 +181,84 @@ export function CreateProgramModalV2() {
                 const TemplateVisual = getTemplateVisual(template.templateName);
 
                 const cardContent = (
-                  <Card
+                  <Button
                     key={template.id}
-                    className={cn(
-                      "transition-all relative",
-                      isUsed || createProgram.isPending || isComingSoon
-                        ? "opacity-60 cursor-not-allowed border-muted"
-                        : "cursor-pointer hover:border-primary hover:shadow-sm",
-                    )}
-                    onClick={() =>
-                      !isUsed &&
-                      !createProgram.isPending &&
-                      !isComingSoon &&
-                      handleTemplateSelect(template)
-                    }
+                    variant="ghost"
+                    className="h-auto p-0 whitespace-normal text-left disabled:opacity-100"
+                    disabled={isUsed || createProgram.isPending || isComingSoon}
+                    onClick={() => handleTemplateSelect(template)}
                   >
-                    <CardHeader>
-                      <div className="space-y-3">
-                        {/* Visual Component */}
-                        <div
-                          className={cn(
-                            "w-full h-24 rounded-lg bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-3 flex items-center justify-center",
-                            (isUsed || isComingSoon) && "opacity-50",
-                          )}
-                        >
-                          {isCreating ? (
-                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                          ) : (
-                            <TemplateVisual className="w-full h-full" />
-                          )}
-                        </div>
-
-                        <div className="flex items-start justify-between">
-                          <CardTitle
+                    <Card
+                      className={cn(
+                        "w-full h-full transition-all relative",
+                        isUsed || createProgram.isPending || isComingSoon
+                          ? "opacity-60 cursor-not-allowed border-muted"
+                          : "cursor-pointer hover:border-primary hover:shadow-sm",
+                      )}
+                    >
+                      <CardHeader>
+                        <div className="space-y-3">
+                          {/* Visual Component */}
+                          <div
                             className={cn(
-                              (isUsed || isComingSoon) &&
-                                "text-muted-foreground",
+                              "w-full h-24 rounded-lg bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-3 flex items-center justify-center",
+                              (isUsed || isComingSoon) && "opacity-50",
                             )}
                           >
-                            {template.templateName}
-                          </CardTitle>
-                          {isComingSoon && (
-                            <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 px-2 py-1 rounded-full">
-                              <span>Coming Soon</span>
-                            </div>
-                          )}
-                          {isUsed && !isComingSoon && (
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
-                              <CheckCircle2 className="h-3 w-3" />
-                              <span>In Use</span>
-                            </div>
-                          )}
-                          {isCreating && (
-                            <div className="flex items-center gap-1 text-xs text-primary bg-primary/10 px-2 py-1 rounded-full">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              <span>Creating...</span>
-                            </div>
+                            {isCreating ? (
+                              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            ) : (
+                              <TemplateVisual className="w-full h-full" />
+                            )}
+                          </div>
+
+                          <div className="flex items-start justify-between">
+                            <CardTitle
+                              className={cn(
+                                (isUsed || isComingSoon) &&
+                                  "text-muted-foreground",
+                              )}
+                            >
+                              {template.templateName}
+                            </CardTitle>
+                            {isComingSoon && (
+                              <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 px-2 py-1 rounded-full">
+                                <span>Coming Soon</span>
+                              </div>
+                            )}
+                            {isUsed && !isComingSoon && (
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span>In Use</span>
+                              </div>
+                            )}
+                            {isCreating && (
+                              <div className="flex items-center gap-1 text-xs text-primary bg-primary/10 px-2 py-1 rounded-full">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <span>Creating...</span>
+                              </div>
+                            )}
+                          </div>
+                          <CardDescription>
+                            {template.description}
+                          </CardDescription>
+                          {isUsed && existingProgram && (
+                            <p className="text-xs text-muted-foreground mt-2">
+                              Already created as "{existingProgram.name}"
+                            </p>
                           )}
                         </div>
-                        <CardDescription>
-                          {template.description}
-                        </CardDescription>
-                        {isUsed && existingProgram && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Already created as "{existingProgram.name}"
-                          </p>
-                        )}
-                      </div>
-                    </CardHeader>
-                  </Card>
+                      </CardHeader>
+                    </Card>
+                  </Button>
                 );
 
                 if (isComingSoon) {
                   return (
                     <Tooltip key={template.id}>
-                      <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>{cardContent}</span>
+                      </TooltipTrigger>
                       <TooltipContent>
                         <p>This template is coming soon</p>
                       </TooltipContent>
@@ -228,7 +269,9 @@ export function CreateProgramModalV2() {
                 if (isUsed) {
                   return (
                     <Tooltip key={template.id}>
-                      <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>{cardContent}</span>
+                      </TooltipTrigger>
                       <TooltipContent>
                         <p>This template is already in use</p>
                         {existingProgram && (

@@ -1,0 +1,15 @@
+[worker.oci]
+  max-parallelism = 1
+  gc = true
+  reservedSpace = "512MB"
+  maxUsedSpace = "4GB"
+  minFreeSpace = "8GB"
+
+[worker.containerd]
+  enabled = false
+
+[system]
+  maxRegistryConcurrency = 2
+
+[history]
+  maxEntries = 10

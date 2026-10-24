@@ -1,13 +1,91 @@
 import { betterAuth } from "better-auth";
+import type {
+  Auth as BetterAuthInstance,
+  BaseSession,
+  BaseUser,
+  BetterAuthOptions,
+  BetterAuthRateLimitRule,
+  StandardSchemaV1,
+  StrictEndpoint,
+} from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { apiKey, magicLink, organization } from "better-auth/plugins";
+import { magicLink, organization } from "better-auth/plugins";
+import type {
+  DefaultOrganizationPlugin,
+  MagicLinkOptions,
+  OrganizationOptions,
+} from "better-auth/plugins";
+import { apiKey } from "@better-auth/api-key";
+import type { ApiKeyClientPlugin } from "@better-auth/api-key/client";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import {
   renderMagicLinkEmail,
   renderInvitationEmail,
 } from "@refref/email-templates";
-import type { DBType } from "@refref/coredb";
+import type { DBType, schema as databaseSchema } from "@refref/coredb";
 import { Resend } from "resend";
 import { eq, and, inArray } from "drizzle-orm";
+
+interface MagicLinkSignInInput {
+  email: string;
+  name?: string;
+  callbackURL?: string;
+  newUserCallbackURL?: string;
+  errorCallbackURL?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface MagicLinkVerifyQuery {
+  token: string;
+  callbackURL?: string;
+  errorCallbackURL?: string;
+  newUserCallbackURL?: string;
+}
+
+// The SDK has no named magic-link result type; retain its public endpoint contract.
+interface RefRefMagicLinkPlugin {
+  id: "magic-link";
+  version: string;
+  options: MagicLinkOptions;
+  rateLimit: (BetterAuthRateLimitRule & {
+    pathMatcher(path: string): boolean;
+  })[];
+  endpoints: {
+    signInMagicLink: StrictEndpoint<
+      "/sign-in/magic-link",
+      {
+        method: "POST";
+        requireHeaders: true;
+        body: StandardSchemaV1<MagicLinkSignInInput, MagicLinkSignInInput>;
+      },
+      { status: boolean }
+    >;
+    magicLinkVerify: StrictEndpoint<
+      "/magic-link/verify",
+      {
+        method: "GET";
+        requireHeaders: true;
+        query: StandardSchemaV1<MagicLinkVerifyQuery, MagicLinkVerifyQuery>;
+      },
+      { token: string; user: BaseUser; session: BaseSession }
+    >;
+  };
+}
+
+type RefRefBasePlugins = [
+  DefaultOrganizationPlugin<OrganizationOptions>,
+  ApiKeyClientPlugin["$InferServerPlugin"],
+];
+
+type RefRefAuthOptions = Omit<BetterAuthOptions, "plugins"> & {
+  plugins: RefRefBasePlugins | [RefRefMagicLinkPlugin, ...RefRefBasePlugins];
+};
+
+export type RefRefAuth = BetterAuthInstance<RefRefAuthOptions>;
 
 export interface AuthConfig {
   /**
@@ -28,7 +106,7 @@ export interface AuthConfig {
   /**
    * Database schema
    */
-  schema: Record<string, any>;
+  schema: typeof databaseSchema;
 
   /**
    * Enabled social auth providers
@@ -44,6 +122,7 @@ export interface AuthConfig {
    * Enable magic link authentication
    */
   enableMagicLinkAuth: boolean;
+  disableSignUp?: boolean;
 
   /**
    * Google OAuth credentials (optional)
@@ -57,19 +136,8 @@ export interface AuthConfig {
    * Logger instance
    */
   logger?: {
-    info: (message: string, meta?: any) => void;
-    error: (message: string, meta?: any) => void;
-  };
-
-  /**
-   * PostHog instance for analytics
-   */
-  posthog?: {
-    capture: (event: {
-      distinctId: string;
-      event: string;
-      properties?: any;
-    }) => void;
+    info: (message: string, meta?: Record<string, unknown>) => void;
+    error: (message: string, meta?: Record<string, unknown>) => void;
   };
 
   /**
@@ -86,7 +154,7 @@ export interface AuthConfig {
 /**
  * Creates a Better Auth instance with the provided configuration
  */
-export function getAuth(config: AuthConfig) {
+export function getAuth(config: AuthConfig): RefRefAuth {
   const {
     baseURL,
     resendApiKey,
@@ -95,9 +163,9 @@ export function getAuth(config: AuthConfig) {
     enabledSocialAuth,
     enablePasswordAuth,
     enableMagicLinkAuth,
+    disableSignUp = false,
     google,
     logger,
-    posthog,
     trustedOrigins = [baseURL],
     emailFrom = "RefRef <notifications@mail.refref.ai>",
   } = config;
@@ -120,11 +188,35 @@ export function getAuth(config: AuthConfig) {
     {} as Record<string, { clientId: string; clientSecret: string }>,
   );
 
-  // Initialize Resend for email sending
-  const resend = new Resend(resendApiKey);
+  function mailer() {
+    if (!resendApiKey || resendApiKey === "debug_key") {
+      throw new Error("Email delivery is not configured");
+    }
+    return new Resend(resendApiKey);
+  }
+  async function sendLink(email: string, url: string, subject: string) {
+    const sender = mailer();
+    const html = await renderMagicLinkEmail(url);
+    const result = await sender.emails.send({
+      from: emailFrom,
+      to: email,
+      subject,
+      html,
+    });
+    if (result.error) throw new Error("Email delivery failed");
+  }
 
-  return betterAuth({
+  return betterAuth<RefRefAuthOptions>({
+    logger: {
+      level: "warn",
+      log: (level) => {
+        if (logger) logger.error("Authentication diagnostic", { level });
+        else console.error("Authentication diagnostic", { level });
+      },
+    },
     baseURL,
+    telemetry: { enabled: false },
+    advanced: { cookiePrefix: "refref" },
     socialProviders,
     database: drizzleAdapter(db, {
       provider: "pg",
@@ -134,55 +226,86 @@ export function getAuth(config: AuthConfig) {
     }),
     emailAndPassword: {
       enabled: enablePasswordAuth,
+      disableSignUp,
+      requireEmailVerification: true,
     },
     trustedOrigins,
-    emailProviders: {
-      resend: {
-        enabled: !!resendApiKey && resendApiKey !== "debug_key",
-        apiKey: resendApiKey || "debug_key",
-        autosignup: true,
+    user: {
+      changeEmail: { enabled: true, updateEmailWithoutVerification: false },
+    },
+    emailVerification: {
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendLink(user.email, url, "Verify your email address");
       },
+    },
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/organization/list-invitations") return;
+        const session = await getSessionFromCtx(ctx);
+        if (!session) throw new APIError("UNAUTHORIZED");
+        const organizationId =
+          ctx.query?.organizationId ?? session.session.activeOrganizationId;
+        if (typeof organizationId !== "string") throw new APIError("FORBIDDEN");
+        const [member] = await db
+          .select()
+          .from(schema.orgUser)
+          .where(
+            and(
+              eq(schema.orgUser.orgId, organizationId),
+              eq(schema.orgUser.userId, session.user.id),
+            ),
+          )
+          .limit(1);
+        if (member?.role !== "owner" && member?.role !== "admin")
+          throw new APIError("FORBIDDEN");
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (!ctx.path.startsWith("/organization/")) return;
+        const result = ctx.context.returned;
+        if (
+          !result ||
+          typeof result !== "object" ||
+          !("invitations" in result) ||
+          !("id" in result) ||
+          typeof result.id !== "string"
+        )
+          return;
+        const session = await getSessionFromCtx(ctx);
+        const [member] = session
+          ? await db
+              .select()
+              .from(schema.orgUser)
+              .where(
+                and(
+                  eq(schema.orgUser.orgId, result.id),
+                  eq(schema.orgUser.userId, session.user.id),
+                ),
+              )
+              .limit(1)
+          : [];
+        if (member?.role !== "owner" && member?.role !== "admin") {
+          return ctx.json({ ...result, invitations: [] });
+        }
+      }),
     },
     plugins: [
       ...(enableMagicLinkAuth
-        ? [
+        ? ([
             magicLink({
+              disableSignUp,
               sendMagicLink: async ({ email, url }) => {
-                try {
-                  logger?.info("Sending magic link email", { url, email });
-
-                  const emailContent = await renderMagicLinkEmail(url);
-
-                  await resend.emails.send({
-                    from: emailFrom,
-                    to: email,
-                    subject: "Your Magic Link to Sign In",
-                    html: emailContent,
-                  });
-
-                  logger?.info("Magic link email sent successfully", { email });
-                } catch (error) {
-                  console.error("Error sending magic link email", {
-                    error,
-                    email,
-                  });
-                  logger?.error("Error sending magic link email", {
-                    error,
-                    email,
-                  });
-                  throw error;
-                }
+                await sendLink(email, url, "Your Magic Link to Sign In");
               },
             }),
-          ]
-        : []),
-      organization({
+          ] as const)
+        : ([] as const)),
+      organization<OrganizationOptions>({
+        requireEmailVerificationOnInvitation: true,
         schema: {
           organization: {
             modelName: "org",
           },
           session: {
-            modelName: "session",
             fields: {
               activeOrganizationId: "activeOrganizationId",
             },
@@ -201,8 +324,8 @@ export function getAuth(config: AuthConfig) {
           },
         },
         async sendInvitationEmail({ id, email, role, inviter }) {
+          const sender = mailer();
           const inviteLink = `${baseURL}/accept-invitation/${id}`;
-          logger?.info("Sending invitation email", { inviteLink, email, role });
 
           const emailContent = await renderInvitationEmail({
             role,
@@ -211,12 +334,13 @@ export function getAuth(config: AuthConfig) {
             inviteLink,
           });
 
-          await resend.emails.send({
+          const result = await sender.emails.send({
             from: emailFrom,
             to: email,
             subject: "You've been invited to RefRef",
             html: emailContent,
           });
+          if (result.error) throw new Error("Email delivery failed");
         },
         organizationHooks: {
           async afterAddMember({ member }) {
@@ -231,16 +355,7 @@ export function getAuth(config: AuthConfig) {
                 .where(eq(user.id, member.userId))
                 .limit(1);
 
-              // Skip sync for service accounts (identified by email pattern or other criteria)
-              if (
-                userRecord?.email?.includes("service-account") ||
-                userRecord?.name?.includes("Service Account")
-              ) {
-                logger?.info("Skipping member sync for service account", {
-                  userId: member.userId,
-                });
-                return;
-              }
+              if (userRecord?.role === "service") return;
 
               // Get the product for this organization
               const [orgProduct] = await db
@@ -250,9 +365,6 @@ export function getAuth(config: AuthConfig) {
                 .limit(1);
 
               if (!orgProduct) {
-                logger?.info("No product found for organization", {
-                  organizationId: member.organizationId,
-                });
                 return;
               }
 
@@ -279,22 +391,8 @@ export function getAuth(config: AuthConfig) {
                   })),
                 );
               }
-
-              logger?.info(
-                "Successfully synced member to product and programs",
-                {
-                  userId: member.userId,
-                  organizationId: member.organizationId,
-                  productId: orgProduct.id,
-                  programCount: programs.length,
-                },
-              );
             } catch (error) {
-              logger?.error("Failed to sync member to product and programs", {
-                error,
-                userId: member.userId,
-                organizationId: member.organizationId,
-              });
+              logger?.error("Failed to sync member to product and programs");
               // Don't throw - allow member addition to succeed even if sync fails
             }
           },
@@ -310,12 +408,6 @@ export function getAuth(config: AuthConfig) {
                 .limit(1);
 
               if (!orgProduct) {
-                logger?.info(
-                  "No product found for organization during removal",
-                  {
-                    organizationId: member.organizationId,
-                  },
-                );
                 return;
               }
 
@@ -347,24 +439,9 @@ export function getAuth(config: AuthConfig) {
                     eq(productUser.userId, member.userId),
                   ),
                 );
-
-              logger?.info(
-                "Successfully removed member from product and programs",
-                {
-                  userId: member.userId,
-                  organizationId: member.organizationId,
-                  productId: orgProduct.id,
-                  programCount: programs.length,
-                },
-              );
             } catch (error) {
               logger?.error(
                 "Failed to remove member from product and programs",
-                {
-                  error,
-                  userId: member.userId,
-                  organizationId: member.organizationId,
-                },
               );
               // Don't throw - allow member removal to succeed even if cleanup fails
             }
@@ -374,22 +451,19 @@ export function getAuth(config: AuthConfig) {
       apiKey({
         defaultPrefix: "prod_refref_key_",
         enableMetadata: true,
+        rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 120 },
       }),
     ],
     databaseHooks: {
       user: {
         create: {
+          before: async () => {
+            if (disableSignUp)
+              throw new APIError("FORBIDDEN", {
+                message: "Sign up is disabled",
+              });
+          },
           after: async (user) => {
-            // Track user signup event
-            posthog?.capture({
-              distinctId: user.id,
-              event: "user_sign_up",
-              properties: {
-                email: user.email,
-                name: user.name || undefined,
-              },
-            });
-
             // Auto-create default organization for new users
             try {
               const { org: orgTable, orgUser } = schema;
@@ -402,13 +476,6 @@ export function getAuth(config: AuthConfig) {
                 .limit(1);
 
               if (existingMembership.length > 0) {
-                logger?.info(
-                  "User already has org membership, skipping default org creation",
-                  {
-                    userId: user.id,
-                    orgId: existingMembership[0]!.orgId,
-                  },
-                );
                 return;
               }
 
@@ -427,16 +494,8 @@ export function getAuth(config: AuthConfig) {
                 userId: user.id,
                 role: "owner",
               });
-
-              logger?.info("Created default organization for new user", {
-                userId: user.id,
-                organizationId: newOrg!.id,
-              });
             } catch (error) {
-              logger?.error("Failed to create default organization for user", {
-                userId: user.id,
-                error,
-              });
+              logger?.error("Failed to create default organization for user");
               // Don't throw - allow user creation to succeed even if org creation fails
             }
           },
@@ -445,6 +504,3 @@ export function getAuth(config: AuthConfig) {
     },
   });
 }
-
-// Export types
-export type Auth = ReturnType<typeof getAuth>;

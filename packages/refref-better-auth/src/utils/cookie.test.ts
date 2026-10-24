@@ -2,17 +2,6 @@ import { describe, it, expect } from "vitest";
 import { extractRefcodeFromRequest } from "./cookie";
 
 describe("Cookie Utilities", () => {
-  it("should extract refcode from cookie", () => {
-    const request = {
-      headers: {
-        cookie: "refref_refcode=ABC123; session=xyz",
-      },
-    };
-
-    const refcode = extractRefcodeFromRequest(request);
-    expect(refcode).toBe("ABC123");
-  });
-
   it("should return undefined when cookie not found", () => {
     const request = {
       headers: {

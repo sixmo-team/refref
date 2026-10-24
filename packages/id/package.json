@@ -18,19 +18,19 @@
   "scripts": {
     "build": "bunchee",
     "dev": "bunchee --watch",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --maxWorkers=1",
+    "test:watch": "vitest --maxWorkers=1",
     "type:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@paralleldrive/cuid2": "^2.2.2"
+    "@paralleldrive/cuid2": "^2.3.1"
   },
   "devDependencies": {
     "@refref/eslint-config": "workspace:*",
     "@refref/typescript-config": "workspace:*",
-    "@types/node": "^22.15.3",
-    "bunchee": "^6.4.0",
-    "typescript": "^5.8.3",
-    "vitest": "^3.1.4"
+    "@types/node": "^22.20.5",
+    "bunchee": "^7.0.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }

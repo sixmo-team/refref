@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { purchaseEventMetadataV2Schema } from "./referral-contract";
 
 // Event Definition Config V1
 export const eventDefinitionConfigV1Schema = z.object({
@@ -21,3 +22,8 @@ export const eventMetadataV1Schema = z.object({
   customData: z.record(z.string(), z.unknown()).optional(),
 });
 export type EventMetadataV1Type = z.infer<typeof eventMetadataV1Schema>;
+export const eventMetadataSchema = z.union([
+  eventMetadataV1Schema,
+  purchaseEventMetadataV2Schema,
+]);
+export type EventMetadata = z.infer<typeof eventMetadataSchema>;

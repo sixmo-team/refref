@@ -1,249 +1,111 @@
 # @refref/better-auth
 
-Better Auth integration for RefRef referral tracking. Automatically tracks user signups with referral attribution by extracting referral codes from cookies and calling the RefRef API.
+Server-side signup attribution for Better Auth. This checkout contains local hardening changes; no package has been published. Consume the built package from this fork when integrating it, not an assumed equivalent registry release. The sibling backend/mobile applications are not connected automatically.
 
-## Installation
+Verified with Better Auth 1.7.11 and Node.js 24. See the [root deployment instructions](../../README.md) for the isolated development stack and bounded build/test commands.
 
-```bash
-npm install @refref/better-auth
-# or
-pnpm add @refref/better-auth
-# or
-yarn add @refref/better-auth
-```
+## Configuration
 
-## Quick Start
-
-### 1. Set up Better Auth with RefRef plugin
+Add this plugin to your existing Better Auth plugin list; keep the existing database, providers and other authentication options:
 
 ```typescript
-import { betterAuth } from "better-auth";
 import { refrefAnalytics } from "@refref/better-auth";
 
-export const auth = betterAuth({
-  // ... your Better Auth config
-  plugins: [
-    refrefAnalytics({
-      apiKey: process.env.REFREF_API_KEY!,
-      productId: process.env.REFREF_PRODUCT_ID!,
-      apiUrl: process.env.REFREF_API_URL, // optional, defaults to production
-    }),
-  ],
+const analytics = refrefAnalytics({
+  apiKey: process.env.REFREF_API_KEY!,
+  productId: process.env.REFREF_PRODUCT_ID!,
+  apiUrl: process.env.REFREF_API_URL!,
+  programId: process.env.REFREF_PROGRAM_ID,
 });
 ```
 
-### 2. Set the referral cookie
+Required server environment:
 
-When a user visits your site with a referral code (e.g., `?ref=ABC123`), set the cookie:
+```dotenv
+REFREF_API_KEY=your_product_authorized_service_key
+REFREF_PRODUCT_ID=your_product_id
+REFREF_API_URL=http://127.0.0.1:4310/tracking
+```
+
+The URL is explicit: there is **no external hosted default**. The loopback example works from the development server itself; a different container needs an explicitly approved route to the gateway, not a shared database. Keep service keys on the backend, never in browser/mobile bundles.
+
+| Option | Behavior |
+| --- | --- |
+| `apiKey`, `productId`, `apiUrl` | Required. The API checks that the product/program belongs to the key's organization. Keys are organization-wide, not single-product credentials. |
+| `programId` | Optional explicit program selection. |
+| `cookieName` | Defaults to `refref-refcode`, matching the attribution script. |
+| `disableSignupTracking` | Disables automatic user-creation tracking. |
+| `customSignupTrack` | Trusted asynchronous replacement for the default HTTP delivery. Do not log its user data; bound your own I/O. |
+
+The plugin uses the native database `user.create.after` hook, not a synthetic HTTP path. Both `auth.handler(request)` and direct server `auth.api.signUpEmail({ headers, body })` calls retain attribution. A normal sign-in does not create another signup event. Effective endpoint headers take precedence over the original request headers.
+
+## Referral cookie
+
+The referral URL parameter is `refcode`; the cookie is `refref-refcode`. Its value is an opaque code, not a name, email, participant identifier or authentication credential.
+
+The supplied attribution script handles this for browser integrations. A minimal equivalent first-party cookie example:
 
 ```typescript
-// In your app's entry point or landing page
-const urlParams = new URLSearchParams(window.location.search);
-const refcode = urlParams.get("ref");
-
+const refcode = new URL(window.location.href).searchParams.get("refcode");
 if (refcode) {
-  document.cookie = `refref_refcode=${refcode}; path=/; max-age=${30 * 24 * 60 * 60}`; // 30 days
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `refref-refcode=${encodeURIComponent(refcode)}; Path=/; Max-Age=2592000; SameSite=Lax${secure}`;
 }
 ```
 
-### 3. That's it!
+Native cookie parsing preserves encoded values. `extractRefcodeFromRequest(request, cookieName?)` and `extractRefcodeFromContext(context, cookieName?)` are also exported; the latter supports request-based and headers-only endpoint contexts.
 
-When a new user signs up through Better Auth, the plugin will:
+## Manual event delivery
 
-1. Extract the referral code from the cookie
-2. Call the RefRef API to track the signup with attribution
-3. Log the result for debugging
-
-## Configuration Options
-
-```typescript
-interface RefRefPluginOptions {
-  // Required
-  apiKey: string; // Your RefRef API key
-  productId: string; // Your RefRef product ID
-
-  // Optional
-  apiUrl?: string; // API endpoint (default: "https://api.refref.app")
-  programId?: string; // Specific program ID (uses default if not provided)
-  cookieName?: string; // Cookie name (default: "refref_refcode")
-
-  // Advanced
-  disableSignupTracking?: boolean; // Disable automatic tracking
-  customSignupTrack?: (data: SignupTrackingData) => Promise<void>; // Custom logic
-}
-```
-
-## How It Works
-
-The plugin uses Better Auth's `user.create.after` hook to:
-
-1. **Detect new signups**: Triggered automatically when a user is created
-2. **Extract referral code**: Reads from the specified cookie
-3. **Call RefRef API**: Sends signup event with user data and referral attribution
-4. **Handle errors gracefully**: Logs errors without disrupting the auth flow
-
-## API Reference
-
-### Main Export
-
-#### `refrefAnalytics(options: RefRefPluginOptions)`
-
-Creates the Better Auth plugin instance.
-
-### Utility Exports
-
-#### `RefRefAPIClient`
-
-Direct access to the API client for manual tracking:
+Use the separately exported client. Better Auth does **not** expose an injected `auth.api.refrefClient`:
 
 ```typescript
 import { RefRefAPIClient } from "@refref/better-auth";
 
-const client = new RefRefAPIClient(apiKey, apiUrl);
-await client.trackSignup(payload);
-await client.trackPurchase(payload);
-```
+const client = new RefRefAPIClient(
+  process.env.REFREF_API_KEY!,
+  process.env.REFREF_API_URL!,
+);
 
-#### `extractRefcodeFromRequest(request, cookieName?)`
-
-Extract referral code from a request object:
-
-```typescript
-import { extractRefcodeFromRequest } from "@refref/better-auth";
-
-const refcode = extractRefcodeFromRequest(request, "refref_refcode");
-```
-
-## Advanced Usage
-
-### Custom Signup Tracking
-
-Override the default tracking behavior:
-
-```typescript
-refrefAnalytics({
-  apiKey: process.env.REFREF_API_KEY!,
-  productId: process.env.REFREF_PRODUCT_ID!,
-  customSignupTrack: async (data) => {
-    // Add custom logic
-    console.log("Custom tracking:", data);
-
-    // Call your own API
-    await fetch("/api/custom-track", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-});
-```
-
-### Manual Tracking
-
-Access the API client directly from the auth instance:
-
-```typescript
-// After initializing auth with the plugin
-const client = auth.api.refrefClient;
-
-// Track a custom event
-await client.trackPurchase({
+const result = await client.trackPurchase({
   timestamp: new Date().toISOString(),
-  productId: "your-product-id",
+  productId: process.env.REFREF_PRODUCT_ID!,
+  programId: process.env.REFREF_PROGRAM_ID,
   payload: {
-    userId: "user-123",
+    userId: "external-user-id",
+    orderId: "stable-order-id",
     orderAmount: 99.99,
-    orderId: "order-456",
+    currency: "USD",
   },
 });
+
+if (!result.success) {
+  // A bounded diagnostic, never the raw transport error or response body.
+  throw new Error(result.message);
+}
 ```
 
-### Disable Automatic Tracking
+The supported methods are `trackSignup` and `trackPurchase`. There is no generic custom-event endpoint. Exported types include `RefRefPluginOptions`, `SignupTrackingData`, `SignupTrackingPayload`, `PurchaseTrackingPayload`, `TrackingResponse` and `TrackingEventData`.
 
-Use the plugin for manual tracking only:
+## Delivery and privacy boundaries
 
-```typescript
-refrefAnalytics({
-  apiKey: process.env.REFREF_API_KEY!,
-  productId: process.env.REFREF_PRODUCT_ID!,
-  disableSignupTracking: true, // Disable automatic tracking
-});
-```
+- HTTP(S) API bases only; URL credentials, queries and fragments are rejected. Redirects are not followed with service credentials.
+- Each default HTTP delivery has a five-second deadline. Non-success response bodies are cancelled, not logged; successful data is schema-validated and restricted to event/participant/referral identifiers.
+- Account creation is not rolled back when attribution fails. The plugin emits only a generic failure diagnostic; it does not log names, emails, referral codes or raw errors. Delivery is best-effort and has no automatic retry.
+- The host application's own logging, telemetry and custom callbacks remain its responsibility. Disable Better Auth telemetry in the host configuration when required.
 
-## Environment Variables
+## Verification
 
-Add these to your `.env` file:
+After preparing the disposable test environment described in the root README:
 
 ```bash
-REFREF_API_KEY=your_api_key_here
-REFREF_PRODUCT_ID=your_product_id_here
-REFREF_API_URL=https://api.refref.app  # Optional
+node scripts/dev.mjs run corepack pnpm --filter @refref/better-auth test
+node scripts/dev.mjs run corepack pnpm --filter @refref/better-auth typecheck
+node scripts/dev.mjs run corepack pnpm --filter @refref/better-auth build
 ```
 
-## Cookie Management
-
-The plugin expects a cookie with the referral code. Here's a complete example:
-
-```typescript
-// utils/referral.ts
-export function setReferralCookie(refcode: string) {
-  const maxAge = 30 * 24 * 60 * 60; // 30 days in seconds
-  document.cookie = `refref_refcode=${refcode}; path=/; max-age=${maxAge}; samesite=lax`;
-}
-
-export function getReferralCookie(): string | null {
-  const match = document.cookie.match(/refref_refcode=([^;]+)/);
-  return match ? match[1] : null;
-}
-
-export function clearReferralCookie() {
-  document.cookie = "refref_refcode=; path=/; max-age=0";
-}
-```
-
-## TypeScript Support
-
-Full TypeScript support with exported types:
-
-```typescript
-import type {
-  RefRefPluginOptions,
-  SignupTrackingData,
-  TrackingResponse,
-} from "@refref/better-auth";
-```
-
-## Troubleshooting
-
-### Signup not being tracked
-
-1. Check that the cookie is set correctly:
-
-   ```javascript
-   console.log(document.cookie); // Should include refref_refcode=XXX
-   ```
-
-2. Verify API key and product ID are correct
-
-3. Check console for error messages
-
-4. Ensure Better Auth is configured correctly
-
-### Cookie not being read
-
-1. Verify cookie name matches configuration
-2. Check cookie path and domain settings
-3. Ensure cookie hasn't expired
-
-### API errors
-
-1. Check network tab for failed requests
-2. Verify API key has correct permissions
-3. Check RefRef API status
+Tests exercise native Better Auth account-creation/sign-in transitions and a real loopback HTTP server, including headers-only attribution, disabled/failing delivery, URL rejection, response validation and PII-free diagnostics.
 
 ## License
 
-MIT
-
-## Support
-
-For issues or questions, please visit the RefRef documentation or contact support.
+This package declares MIT licensing in its package metadata. The RefRef server repository is AGPL-3.0; do not treat the package metadata as changing the server's license.

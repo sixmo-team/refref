@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { api } from "@/trpc/react";
 import { Button } from "@refref/ui/components/button";
 import { Input } from "@refref/ui/components/input";
@@ -38,6 +38,10 @@ export function CreateOrgApiKeyDialog({
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [dedicated, setDedicated] = useState(false);
+  const [productId, setProductId] = useState("");
+  const [programId, setProgramId] = useState("");
+  const creating = useRef(false);
 
   const utils = api.useUtils();
 
@@ -55,15 +59,33 @@ export function CreateOrgApiKeyDialog({
   });
 
   const handleCreate = async () => {
+    if (creating.current) return;
+    if (dedicated && (!productId.trim() || !programId.trim())) {
+      toast.error("Explicit authorized product and program IDs are required");
+      return;
+    }
     if (!name.trim()) {
       toast.error("Please enter a name for the API key");
       return;
     }
 
-    await createKeyMutation.mutateAsync({
-      name,
-      expiresIn: parseInt(expiresIn),
-    });
+    creating.current = true;
+    try {
+      await createKeyMutation.mutateAsync({
+        name,
+        expiresIn: parseInt(expiresIn),
+        ...(dedicated
+          ? {
+              referralScope: {
+                productId: productId.trim(),
+                programId: programId.trim(),
+              },
+            }
+          : {}),
+      });
+    } finally {
+      creating.current = false;
+    }
   };
 
   const handleCopyKey = async () => {
@@ -81,6 +103,9 @@ export function CreateOrgApiKeyDialog({
   const handleClose = () => {
     setName("");
     setExpiresIn("0");
+    setDedicated(false);
+    setProductId("");
+    setProgramId("");
     setCreatedKey(null);
     setCopied(false);
     setShowKey(false);
@@ -174,9 +199,9 @@ export function CreateOrgApiKeyDialog({
         <DialogHeader>
           <DialogTitle>Create Organization API Key</DialogTitle>
           <DialogDescription>
-            Create a new API key to authenticate API requests to your
-            organization. This key will have full access to all products and
-            programs.
+            Create an organization key, or restrict it to protected
+            first-payment resolution and purchase for one explicitly authorized
+            product/program.
           </DialogDescription>
         </DialogHeader>
 
@@ -193,6 +218,34 @@ export function CreateOrgApiKeyDialog({
               A descriptive name to identify this API key
             </p>
           </div>
+          <label className="flex gap-2">
+            <input
+              type="checkbox"
+              checked={dedicated}
+              onChange={(e) => setDedicated(e.target.checked)}
+            />
+            Dedicated first-payment integration
+          </label>
+          {dedicated && (
+            <div className="space-y-2">
+              <Label htmlFor="referral-product">Authorized product ID</Label>
+              <Input
+                id="referral-product"
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
+              />
+              <Label htmlFor="referral-program">Authorized program ID</Label>
+              <Input
+                id="referral-program"
+                value={programId}
+                onChange={(e) => setProgramId(e.target.value)}
+              />
+              <p className="text-xs">
+                No first-product fallback. The server checks
+                organization/product/program ownership.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="expiry">Expiry</Label>

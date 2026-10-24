@@ -21,36 +21,26 @@ import {
   User,
   Hash,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { DateDisplay } from "@/components/date-display";
+import { api, type RouterInputs, type RouterOutputs } from "@/trpc/react";
 
 interface ParticipantCardProps {
-  participant: {
-    id: string;
-    name: string | null;
-    email: string | null;
-    externalId: string | null;
-    createdAt: string | Date;
-    refcode?: {
-      id: string;
-      code: string;
-    } | null;
-    referralUrl: string | null;
-    referralCount: number;
-    eventsCount: number;
-    recentReferrals: Array<{
-      id: string;
-      name: string | null;
-      email: string | null;
-      externalId: string;
-      createdAt: string | Date;
-    }>;
-  };
+  participant: RouterOutputs["participants"]["getById"];
+  scope: RouterInputs["participants"]["getById"]["scope"];
 }
 
-export function ParticipantCard({ participant }: ParticipantCardProps) {
+export function ParticipantCard({ participant, scope }: ParticipantCardProps) {
   const [copied, setCopied] = useState(false);
+  const codeBusy = useRef(false);
+  const utils = api.useUtils();
+  const codeMutation = api.referral.setCodeActive.useMutation({
+    onSettled: () => {
+      void utils.participants.getById.invalidate({ id: participant.id, scope });
+      codeBusy.current = false;
+    },
+  });
 
   const getInitials = (name: string | null, email: string | null) => {
     if (name) {
@@ -194,6 +184,43 @@ export function ParticipantCard({ participant }: ParticipantCardProps) {
                   </Button>
                 </div>
               </div>
+            </div>
+          )}
+          {participant.refcode && (
+            <div className="space-y-2">
+              <p>
+                Code {participant.refcode.code}:{" "}
+                {participant.refcode.isActive ? "active" : "disabled"}. Accepted
+                purchases retain their original terms.
+              </p>
+              <Button
+                variant="outline"
+                disabled={codeMutation.isPending}
+                onClick={() => {
+                  if (codeBusy.current || !participant.refcode) return;
+                  codeBusy.current = true;
+                  codeMutation.mutate(
+                    {
+                      productId: participant.productId,
+                      codeId: participant.refcode.id,
+                      active: !participant.refcode.isActive,
+                    },
+                    {
+                      onError: (error) =>
+                        toast.error(
+                          error.message || "Code activation change failed",
+                        ),
+                    },
+                  );
+                }}
+              >
+                {participant.refcode.isActive
+                  ? "Disable code (administrator)"
+                  : "Enable code (administrator)"}
+              </Button>
+              {codeMutation.error && (
+                <p role="alert">{codeMutation.error.message}</p>
+              )}
             </div>
           )}
 

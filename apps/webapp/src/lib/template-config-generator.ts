@@ -29,6 +29,7 @@ function formatCurrencyValue(
     USD: "$",
     EUR: "€",
     GBP: "£",
+    RUB: "₽",
     CAD: "C$",
     AUD: "A$",
   };

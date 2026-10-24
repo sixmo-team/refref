@@ -14,10 +14,9 @@ export class OnboardingPage extends BasePage {
   /**
    * Complete onboarding by creating a product
    * If already onboarded, call skipIfNeeded() first to check
-   * @param organizationName - Not used (organization is auto-created from user email)
    * @param productName - Name of the product to create
    */
-  async completeOnboarding(organizationName: string, productName: string) {
+  async completeOnboarding(productName: string) {
     // Navigate to onboarding page
     await this.page.goto("/onboarding");
     await this.waitForPageLoad();
@@ -91,9 +90,6 @@ export class OnboardingPage extends BasePage {
     // Check if we're still on onboarding page or were redirected
     const currentUrl = this.page.url();
     const stillOnOnboarding = currentUrl.includes("/onboarding");
-
-    // Use expect to document the check (soft assertion always passes)
-    await expect.soft(stillOnOnboarding).toBeDefined();
 
     // Log based on result (ternary is allowed for logging)
     console.log(

@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => ({
     // to emit types for dev purposes?
     dts({
       insertTypesEntry: true,
-      outDir: "dist/types",
+      outDirs: "dist/types",
       exclude: ["src/**/*.test.ts"],
     }),
   ],

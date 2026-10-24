@@ -6,7 +6,6 @@ import {
   Head,
   Heading,
   Html,
-  Img,
   Link,
   Preview,
   Section,
@@ -68,23 +67,24 @@ export function MagicLinkEmail({
           }}
           className="dark-container-bg dark-border"
         >
-          {/* Header with Logo */}
+          {/* Header */}
           <Section
             style={{
               padding: "40px 40px 32px",
               textAlign: "center",
             }}
           >
-            <Img
-              src="https://app.refref.ai/icon-192x192.png"
-              alt="RefRef"
-              width="48"
-              height="48"
+            <Text
               style={{
-                margin: "0 auto",
-                display: "block",
+                color: "#252525",
+                fontSize: "24px",
+                fontWeight: "600",
+                margin: "0",
               }}
-            />
+              className="dark-text"
+            >
+              RefRef
+            </Text>
           </Section>
 
           {/* Main Content */}

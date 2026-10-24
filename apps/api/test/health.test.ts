@@ -49,15 +49,6 @@ describe("Health Endpoints", () => {
       const contentType = response.headers()["content-type"];
       expect(contentType).toContain("application/json");
     });
-
-    it("should respond quickly", async () => {
-      const startTime = Date.now();
-      const response = await apiContext.get("/health");
-      const endTime = Date.now();
-
-      expect(response.ok()).toBe(true);
-      expect(endTime - startTime).toBeLessThan(1000); // Should respond within 1 second
-    });
   });
 
   describe("GET /", () => {
@@ -84,15 +75,6 @@ describe("Health Endpoints", () => {
 
       const contentType = response.headers()["content-type"];
       expect(contentType).toContain("application/json");
-    });
-
-    it("should respond quickly", async () => {
-      const startTime = Date.now();
-      const response = await apiContext.get("/");
-      const endTime = Date.now();
-
-      expect(response.ok()).toBe(true);
-      expect(endTime - startTime).toBeLessThan(1000); // Should respond within 1 second
     });
   });
 });

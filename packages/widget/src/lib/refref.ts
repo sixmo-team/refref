@@ -105,11 +105,10 @@ class RefRefImpl implements RefRef {
         },
       }));
 
-      console.log("Widget config: ", data);
 
       // this.setConfig(data);
     } catch (error) {
-      console.error("Failed to initialize RefRef widget:", error);
+      console.error("Failed to initialize RefRef widget");
       throw error;
     }
   }

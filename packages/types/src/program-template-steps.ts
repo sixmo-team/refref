@@ -1,22 +1,39 @@
 import { z } from "zod";
 import { currencySchema } from "./program-config";
 
-// New simplified reward step schema
+const referrerRewardFormSchema = z.object({
+  enabled: z.literal(true),
+  valueType: z.enum(["fixed", "percentage"]),
+  value: z.number().nonnegative(),
+  currency: currencySchema,
+  basis: z.enum(["base_amount", "payable_amount"]).optional(),
+});
+const refereeRewardFormSchema = z.object({
+  enabled: z.literal(true),
+  valueType: z.enum(["fixed", "percentage"]),
+  value: z.number().nonnegative(),
+  currency: currencySchema.optional(),
+  minPurchaseAmount: z.number().positive().optional(),
+  validityDays: z.number().int().positive().optional(),
+});
 export const programTemplateRewardStepSchemaV2 = z.object({
-  referrerReward: z.object({
-    enabled: z.boolean(),
-    valueType: z.enum(["fixed", "percentage"]),
-    value: z.number().positive(),
-    currency: currencySchema,
-  }),
-  refereeReward: z.object({
-    enabled: z.boolean(),
-    valueType: z.enum(["fixed", "percentage"]),
-    value: z.number().positive(),
-    currency: currencySchema.optional(), // Only for fixed discounts
-    minPurchaseAmount: z.number().positive().optional(),
-    validityDays: z.number().int().positive().optional(),
-  }),
+  firstPaidOnly: z.boolean().optional(),
+  referrerReward: z.discriminatedUnion("enabled", [
+    referrerRewardFormSchema,
+    referrerRewardFormSchema.extend({
+      enabled: z.literal(false),
+      value: z.number(),
+    }),
+  ]),
+  refereeReward: z.discriminatedUnion("enabled", [
+    refereeRewardFormSchema,
+    refereeRewardFormSchema.extend({
+      enabled: z.literal(false),
+      value: z.number(),
+      minPurchaseAmount: z.number().optional(),
+      validityDays: z.number().optional(),
+    }),
+  ]),
 });
 
 export type ProgramTemplateRewardStepV2Type = z.infer<

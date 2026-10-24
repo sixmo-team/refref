@@ -1,14 +1,19 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  adminProcedure,
+} from "@/server/api/trpc";
 import { db, schema } from "@/server/db";
 const { rewardRule, program: programTable } = schema;
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { rewardRuleConfigV1Schema } from "@refref/types";
+import { assertLegacyTrackingAllowed } from "@refref/coredb";
 
 export const rewardRulesRouter = createTRPCRouter({
   // Create a new reward rule
-  create: protectedProcedure
+  create: adminProcedure
     .input(
       z.object({
         programId: z.string(),
@@ -20,54 +25,73 @@ export const rewardRulesRouter = createTRPCRouter({
         isActive: z.boolean().default(true),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      // Verify program belongs to active product
-      const [program] = await ctx.db
-        .select()
-        .from(programTable)
-        .where(
-          and(
-            eq(programTable.id, input.programId),
-            eq(programTable.productId, ctx.activeProductId),
-          ),
-        )
-        .limit(1);
-
-      if (!program) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Program not found or does not belong to your product",
-        });
-      }
-
-      const [newRule] = await ctx.db
-        .insert(rewardRule)
-        .values({
-          programId: input.programId,
-          name: input.name,
-          description: input.description,
-          type: input.type,
-          config: input.config,
-          priority: input.priority,
-          isActive: input.isActive,
-        })
-        .returning();
-
-      return newRule;
-    }),
+    .mutation(async ({ ctx, input }) =>
+      ctx.db.transaction(async (tx) => {
+        const [program] = await tx
+          .select()
+          .from(programTable)
+          .where(
+            and(
+              eq(programTable.id, input.programId),
+              eq(programTable.productId, ctx.activeProductId),
+            ),
+          )
+          .for("update");
+        if (!program)
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Program not found or does not belong to your product",
+          });
+        await assertLegacyTrackingAllowed(tx, program.id);
+        const [newRule] = await tx
+          .insert(rewardRule)
+          .values({
+            programId: input.programId,
+            name: input.name,
+            description: input.description,
+            type: input.type,
+            config: input.config,
+            priority: input.priority,
+            isActive: input.isActive,
+          })
+          .returning();
+        return newRule;
+      }),
+    ),
 
   // Get all reward rules for a program
   getByProgram: protectedProcedure
-    .input(z.string())
-    .query(async ({ ctx, input: programId }) => {
-      // Verify program belongs to active product
+    .input(
+      z
+        .object({
+          programId: z.string().min(1),
+          scope: z
+            .object({
+              userId: z.string().min(1),
+              organizationId: z.string().min(1),
+            })
+            .strict(),
+        })
+        .strict(),
+    )
+    .query(async ({ ctx, input }) => {
+      const { programId, scope } = input;
+      if (
+        scope.userId !== ctx.userId ||
+        scope.organizationId !== ctx.activeOrganizationId
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
       const [program] = await ctx.db
-        .select()
+        .select({ id: programTable.id })
         .from(programTable)
+        .innerJoin(
+          schema.product,
+          eq(schema.product.id, programTable.productId),
+        )
         .where(
           and(
             eq(programTable.id, programId),
-            eq(programTable.productId, ctx.activeProductId),
+            eq(schema.product.orgId, ctx.activeOrganizationId),
           ),
         )
         .limit(1);
@@ -121,7 +145,7 @@ export const rewardRulesRouter = createTRPCRouter({
     }),
 
   // Update a reward rule
-  update: protectedProcedure
+  update: adminProcedure
     .input(
       z.object({
         id: z.string(),
@@ -133,123 +157,102 @@ export const rewardRulesRouter = createTRPCRouter({
         isActive: z.boolean().optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      const { id, ...updateData } = input;
-
-      // Verify rule exists and belongs to active product
-      const [existingRule] = await ctx.db
-        .select({
-          rule: rewardRule,
-          program: programTable,
-        })
-        .from(rewardRule)
-        .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
-        .where(eq(rewardRule.id, id))
-        .limit(1);
-
-      if (!existingRule) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Reward rule not found",
-        });
-      }
-
-      if (existingRule.program.productId !== ctx.activeProductId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Reward rule does not belong to your product",
-        });
-      }
-
-      const [updatedRule] = await ctx.db
-        .update(rewardRule)
-        .set({
-          ...updateData,
-          updatedAt: new Date(),
-        })
-        .where(eq(rewardRule.id, id))
-        .returning();
-
-      return updatedRule;
-    }),
+    .mutation(async ({ ctx, input }) =>
+      ctx.db.transaction(async (tx) => {
+        const { id, ...updateData } = input;
+        const [existingRule] = await tx
+          .select({ rule: rewardRule, program: programTable })
+          .from(rewardRule)
+          .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
+          .where(eq(rewardRule.id, id))
+          // Lock only the program here: all writers take it before any rule lock.
+          .for("update", { of: programTable });
+        if (!existingRule)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Reward rule not found",
+          });
+        if (existingRule.program.productId !== ctx.activeProductId)
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Reward rule does not belong to your product",
+          });
+        await assertLegacyTrackingAllowed(tx, existingRule.program.id);
+        const [updatedRule] = await tx
+          .update(rewardRule)
+          .set({ ...updateData, updatedAt: new Date() })
+          .where(eq(rewardRule.id, id))
+          .returning();
+        return updatedRule;
+      }),
+    ),
 
   // Toggle rule active status
-  toggleActive: protectedProcedure
+  toggleActive: adminProcedure
     .input(z.string())
-    .mutation(async ({ ctx, input: ruleId }) => {
-      // Verify rule exists and belongs to active product
-      const [existingRule] = await ctx.db
-        .select({
-          rule: rewardRule,
-          program: programTable,
-        })
-        .from(rewardRule)
-        .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
-        .where(eq(rewardRule.id, ruleId))
-        .limit(1);
-
-      if (!existingRule) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Reward rule not found",
-        });
-      }
-
-      if (existingRule.program.productId !== ctx.activeProductId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Reward rule does not belong to your product",
-        });
-      }
-
-      const [updatedRule] = await ctx.db
-        .update(rewardRule)
-        .set({
-          isActive: !existingRule.rule.isActive,
-          updatedAt: new Date(),
-        })
-        .where(eq(rewardRule.id, ruleId))
-        .returning();
-
-      return updatedRule;
-    }),
+    .mutation(async ({ ctx, input: ruleId }) =>
+      ctx.db.transaction(async (tx) => {
+        const [existingRule] = await tx
+          .select({ rule: rewardRule, program: programTable })
+          .from(rewardRule)
+          .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
+          .where(eq(rewardRule.id, ruleId))
+          .for("update", { of: programTable });
+        if (!existingRule)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Reward rule not found",
+          });
+        if (existingRule.program.productId !== ctx.activeProductId)
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Reward rule does not belong to your product",
+          });
+        await assertLegacyTrackingAllowed(tx, existingRule.program.id);
+        const [updatedRule] = await tx
+          .update(rewardRule)
+          .set({
+            isActive: sql`NOT coalesce(${rewardRule.isActive}, false)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(rewardRule.id, ruleId))
+          .returning();
+        return updatedRule;
+      }),
+    ),
 
   // Delete a reward rule
-  delete: protectedProcedure
+  delete: adminProcedure
     .input(z.string())
-    .mutation(async ({ ctx, input: ruleId }) => {
-      // Verify rule exists and belongs to active product
-      const [existingRule] = await ctx.db
-        .select({
-          rule: rewardRule,
-          program: programTable,
-        })
-        .from(rewardRule)
-        .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
-        .where(eq(rewardRule.id, ruleId))
-        .limit(1);
-
-      if (!existingRule) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Reward rule not found",
-        });
-      }
-
-      if (existingRule.program.productId !== ctx.activeProductId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Reward rule does not belong to your product",
-        });
-      }
-
-      await ctx.db.delete(rewardRule).where(eq(rewardRule.id, ruleId));
-
-      return { id: ruleId };
-    }),
+    .mutation(async ({ ctx, input: ruleId }) =>
+      ctx.db.transaction(async (tx) => {
+        const [existingRule] = await tx
+          .select({ rule: rewardRule, program: programTable })
+          .from(rewardRule)
+          .innerJoin(programTable, eq(rewardRule.programId, programTable.id))
+          .where(eq(rewardRule.id, ruleId))
+          .for("update", { of: programTable });
+        if (!existingRule)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Reward rule not found",
+          });
+        if (existingRule.program.productId !== ctx.activeProductId)
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Reward rule does not belong to your product",
+          });
+        await assertLegacyTrackingAllowed(tx, existingRule.program.id);
+        await tx
+          .update(rewardRule)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(rewardRule.id, ruleId));
+        return { id: ruleId };
+      }),
+    ),
 
   // Reorder rules by priority
-  reorderPriorities: protectedProcedure
+  reorderPriorities: adminProcedure
     .input(
       z.object({
         programId: z.string(),
@@ -261,42 +264,39 @@ export const rewardRulesRouter = createTRPCRouter({
         ),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      // Verify program belongs to active product
-      const [program] = await ctx.db
-        .select()
-        .from(programTable)
-        .where(
-          and(
-            eq(programTable.id, input.programId),
-            eq(programTable.productId, ctx.activeProductId),
+    .mutation(async ({ ctx, input }) =>
+      ctx.db.transaction(async (tx) => {
+        const [program] = await tx
+          .select()
+          .from(programTable)
+          .where(
+            and(
+              eq(programTable.id, input.programId),
+              eq(programTable.productId, ctx.activeProductId),
+            ),
+          )
+          .for("update");
+        if (!program)
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Program not found or does not belong to your product",
+          });
+        await assertLegacyTrackingAllowed(tx, program.id);
+        const updates = await Promise.all(
+          input.ruleOrders.map(({ ruleId, priority }) =>
+            tx
+              .update(rewardRule)
+              .set({ priority, updatedAt: new Date() })
+              .where(
+                and(
+                  eq(rewardRule.id, ruleId),
+                  eq(rewardRule.programId, input.programId),
+                ),
+              )
+              .returning(),
           ),
-        )
-        .limit(1);
-
-      if (!program) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Program not found or does not belong to your product",
-        });
-      }
-
-      // Update priorities in a transaction
-      const updates = await Promise.all(
-        input.ruleOrders.map(({ ruleId, priority }) =>
-          ctx.db
-            .update(rewardRule)
-            .set({ priority, updatedAt: new Date() })
-            .where(
-              and(
-                eq(rewardRule.id, ruleId),
-                eq(rewardRule.programId, input.programId),
-              ),
-            )
-            .returning(),
-        ),
-      );
-
-      return updates.flat();
-    }),
+        );
+        return updates.flat();
+      }),
+    ),
 });

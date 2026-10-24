@@ -7,4 +7,11 @@ export {
   validateVanityCode,
   normalizeCode,
   isGlobalCodeFormat,
+  isRefcodeFormat,
 } from "./refcode.js";
+
+export {
+  safeError,
+  safeLogSerializers,
+  type ErrorDiagnostic,
+} from "./logging.js";

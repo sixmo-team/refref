@@ -1,6 +1,7 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyInstance, LogController } from "fastify";
+import type { Writable } from "node:stream";
 import cors from "@fastify/cors";
-import { coredbPlugin } from "@refref/utils";
+import { coredbPlugin, safeLogSerializers } from "@refref/utils";
 import { createDb } from "@refref/coredb";
 import healthRoutes from "./routes/health.js";
 import openapiRoutes from "./routes/openapi.js";
@@ -9,8 +10,9 @@ import jwtAuthPlugin from "./plugins/jwt-auth.js";
 import widgetInitRoutes from "./routes/v1/widget/init.js";
 import trackRoutes from "./routes/v1/track.js";
 import programsRoutes from "./routes/v1/programs.js";
+import resolveRoutes from "./routes/v1/referrals/resolve.js";
 
-export async function buildApp(): Promise<FastifyInstance> {
+export async function buildApp(logStream?: Writable): Promise<FastifyInstance> {
   // Validate required environment variables
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -21,10 +23,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   const db = createDb(databaseUrl);
 
   const app = Fastify({
+    logController: new LogController({ disableRequestLogging: true }),
     logger: {
       level: process.env.LOG_LEVEL || "info",
+      stream: logStream,
+      serializers: safeLogSerializers,
       transport:
-        process.env.NODE_ENV !== "production"
+        !logStream && process.env.NODE_ENV !== "production"
           ? {
               target: "pino-pretty",
               options: {
@@ -63,6 +68,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
       // Track routes (signup, purchase)
       await fastify.register(trackRoutes, { prefix: "/track" });
+      await fastify.register(resolveRoutes, { prefix: "/referrals" });
 
       // Programs routes
       await fastify.register(programsRoutes, { prefix: "/programs" });

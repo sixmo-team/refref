@@ -114,7 +114,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --font-family-sans: var(--font-geist-sans), system-ui, sans-serif;
-  --font-family-logo: var(--font-stack-sans-notch), sans-serif;
+  --font-family-logo: var(--font-geist-sans), system-ui, sans-serif;
 }
 
 @layer base {

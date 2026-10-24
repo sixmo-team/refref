@@ -15,17 +15,17 @@
     "test:clean": "bash scripts/cleanup-ports.sh && SKIP_WEBSERVER_START=false playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0",
-    "@types/node": "^20.11.5",
-    "dotenv": "^16.4.5",
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^20.19.43",
+    "dotenv": "^16.6.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@refref/coredb": "workspace:*",
     "@refref/id": "workspace:*",
     "@refref/utils": "workspace:*",
-    "drizzle-orm": "^0.37.0",
-    "postgres": "^3.4.4"
+    "drizzle-orm": "0.45.4",
+    "postgres": "^3.4.9"
   }
 }

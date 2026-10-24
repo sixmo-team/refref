@@ -13,31 +13,20 @@ import {
 import { api } from "@/trpc/react";
 import { toast } from "sonner";
 import { DateDisplay } from "@/components/date-display";
+import { eventMetadataSchema } from "@refref/types";
+import type { RouterOutputs, RouterInputs } from "@/trpc/react";
 
-export interface Activity {
-  id: string;
-  productId: string;
-  programId: string | null;
-  programName: string | null;
-  participantId: string | null;
-  participantEmail: string | null;
-  participantExternalId: string | null;
-  participantName: string | null;
-  referralId: string | null;
-  eventType: string | null;
-  eventName: string | null;
-  status: string;
-  metadata: any;
-  ipHash: string | null;
-  visitorFingerprint: string | null;
-  deduplicationKey: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type Activity = Omit<
+  RouterOutputs["events"]["getAll"]["data"][number],
+  "createdAt" | "updatedAt"
+> & { createdAt: string; updatedAt: string };
 
 const columnHelper = createColumnHelper<Activity>();
 
-export function getActivityTableColumns() {
+export function getActivityTableColumns(
+  isAdmin: boolean,
+  scope: RouterInputs["events"]["getAll"]["scope"],
+) {
   return [
     columnHelper.accessor("eventType", {
       header: ({ column }) => (
@@ -151,19 +140,37 @@ export function getActivityTableColumns() {
         <DataTableColumnHeader column={column} title="Metadata" />
       ),
       cell: ({ getValue }) => {
-        const metadata = getValue();
-        if (!metadata || Object.keys(metadata).length === 0) return "-";
-
-        const displayItems = [];
-        if (metadata.orderAmount) {
-          displayItems.push(`Amount: $${metadata.orderAmount}`);
+        const parsed = eventMetadataSchema.safeParse(getValue());
+        if (!parsed.success) return <span>Unsupported event metadata</span>;
+        const metadata = parsed.data;
+        const displayItems: string[] = [];
+        if (metadata.schemaVersion === 2) {
+          displayItems.push(`Order: ${metadata.orderId}`);
+          displayItems.push(
+            new Intl.NumberFormat("ru-RU", {
+              style: "currency",
+              currency: metadata.currency,
+            }).format(metadata.orderAmountMinor / 100),
+          );
+          displayItems.push(
+            `Code: ${metadata.referralSnapshot.attribution.codeValue}`,
+          );
+        } else if (metadata.orderAmount !== undefined) {
+          const currency =
+            typeof metadata.customData?.currency === "string" &&
+            /^[A-Z]{3}$/.test(metadata.customData.currency)
+              ? metadata.customData.currency
+              : "USD";
+          displayItems.push(
+            new Intl.NumberFormat(undefined, {
+              style: "currency",
+              currency,
+            }).format(metadata.orderAmount),
+          );
+          if (metadata.orderId) displayItems.push(`Order: ${metadata.orderId}`);
         }
-        if (metadata.source) {
-          displayItems.push(`Source: ${metadata.source}`);
-        }
-        if (metadata.schemaVersion) {
-          displayItems.push(`v${metadata.schemaVersion}`);
-        }
+        if (metadata.source) displayItems.push(`Source: ${metadata.source}`);
+        displayItems.push(`v${metadata.schemaVersion}`);
 
         return (
           <div className="text-sm text-muted-foreground">
@@ -181,7 +188,7 @@ export function getActivityTableColumns() {
       ),
       cell: ({ getValue }) => <DateDisplay date={getValue()} />,
       enableSorting: true,
-      enableColumnFilter: true,
+      enableColumnFilter: false,
       meta: {
         label: "Created At",
         variant: "date",
@@ -194,15 +201,22 @@ export function getActivityTableColumns() {
         const activity = row.original;
         const utils = api.useUtils();
 
-        const { mutate: updateStatus, isPending: isUpdatingStatus } =
-          api.events.updateStatus.useMutation({
+        const mutation = api.events.updateStatus.useMutation({
+          onMutate: () => scope,
+          onSettled: (_data, _error, _input, originatingScope) => {
+            if (!originatingScope) return;
+            void utils.events.getAll.invalidate({ scope: originatingScope });
+          },
+        });
+        const isUpdatingStatus = mutation.isPending;
+        const updateStatus = (input: RouterInputs["events"]["updateStatus"]) =>
+          mutation.mutate(input, {
             onSuccess: (data) => {
               if (data) {
                 toast.success(
                   `Event ${data.id} status updated to ${data.status}`,
                 );
               }
-              utils.events.getAll.invalidate();
             },
             onError: (error) => {
               toast.error(
@@ -211,8 +225,9 @@ export function getActivityTableColumns() {
             },
           });
 
-        const canProcess = activity.status === "pending";
-        const canRetry = activity.status === "failed";
+        const financial = activity.metadata?.schemaVersion === 2;
+        const canProcess = !financial && activity.status === "pending";
+        const canRetry = !financial && activity.status === "failed";
 
         return (
           <div className="text-right">
@@ -261,7 +276,7 @@ export function getActivityTableColumns() {
                       status: "failed",
                     })
                   }
-                  disabled={isUpdatingStatus}
+                  disabled={isUpdatingStatus || financial}
                 >
                   <XCircle className="mr-2 h-4 w-4 text-red-500" />
                   Mark as Failed
@@ -281,5 +296,5 @@ export function getActivityTableColumns() {
       enableSorting: false,
       enableColumnFilter: false,
     }),
-  ];
+  ].filter((column) => column.id !== "actions" || isAdmin);
 }

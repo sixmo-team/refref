@@ -1,47 +1,232 @@
+name: refref-dev
+
+x-restricted: &restricted
+  init: true
+  restart: "on-failure:3"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  oom_score_adj: 500
+  ulimits:
+    core: 0
+    nofile: { soft: 1024, hard: 1024 }
+  dns: [127.0.0.1]
+  dns_opt: [timeout:1, attempts:1]
+  pids_limit: 96
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+  logging:
+    driver: local
+    options: { max-size: 10m, max-file: "3" }
+  networks: [private]
+  pull_policy: never
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: ${REFREF_RUNTIME_DATABASE_URL:?run node scripts/dev.mjs init}
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?run node scripts/dev.mjs init}
+  BETTER_AUTH_URL: http://127.0.0.1:4310
+  APP_URL: http://127.0.0.1:4310
+  NEXT_PUBLIC_APP_URL: http://127.0.0.1:4310
+  NEXT_PUBLIC_REFER_URL: http://127.0.0.1:4310/r
+  REFERRAL_HOST_URL: http://127.0.0.1:4310/r
+  DISABLE_SIGN_UP: "true"
+  NEXT_TELEMETRY_DISABLED: "1"
+  DO_NOT_TRACK: "1"
+  LOG_LEVEL: warn
+
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: refref-db
+  database:
+    <<: *restricted
+    image: local/refref-database:${REFREF_IMAGE_TAG:?run node scripts/dev.mjs init}
+    user: postgres
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    pids_limit: 96
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: refref
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: refref_admin
+      POSTGRES_PASSWORD: ${REFREF_ADMIN_PASSWORD:?run init}
+      REFREF_MIGRATOR_PASSWORD: ${REFREF_MIGRATOR_PASSWORD:?run init}
+      REFREF_APP_PASSWORD: ${REFREF_APP_PASSWORD:?run init}
+      REFREF_DATA_MAX_KIB: ${REFREF_DATA_MAX_KIB:-1048576}
+      REFREF_MIN_FREE_KIB: ${REFREF_MIN_FREE_KIB:-8388608}
+    command:
+      [
+        postgres,
+        -c,
+        shared_buffers=32MB,
+        -c,
+        max_connections=24,
+        -c,
+        work_mem=2MB,
+        -c,
+        maintenance_work_mem=16MB,
+        -c,
+        temp_file_limit=32768,
+        -c,
+        max_wal_size=128MB,
+        -c,
+        min_wal_size=32MB,
+        -c,
+        max_replication_slots=0,
+        -c,
+        max_wal_senders=0,
+        -c,
+        log_statement=none,
+        -c,
+        log_min_error_statement=panic,
+        -c,
+        log_min_messages=fatal,
+        -c,
+        log_error_verbosity=terse,
+      ]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - database:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=4m,uid=70,gid=70,mode=0770
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [CMD-SHELL, "pg_isready -U refref_admin -d refref"]
       interval: 5s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    <<: *restricted
+    image: local/refref-migrate:${REFREF_IMAGE_TAG:?run init}
+    user: "1000:1000"
+    restart: "no"
+    profiles: [tools]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    environment:
+      <<: *app-env
+      DATABASE_URL: ${REFREF_MIGRATOR_DATABASE_URL:?run init}
+    depends_on:
+      database: { condition: service_healthy }
+
+  bootstrap:
+    <<: *restricted
+    image: local/refref-migrate:${REFREF_IMAGE_TAG:?run init}
+    user: "1000:1000"
+    restart: "no"
+    profiles: [tools]
+    command: [node, infra/bootstrap.mjs]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    environment:
+      <<: *app-env
+      DATABASE_URL: ${REFREF_MIGRATOR_DATABASE_URL:?run init}
+      REFREF_DEV_EMAIL: ${REFREF_DEV_EMAIL:?run init}
+      REFREF_DEV_PASSWORD: ${REFREF_DEV_PASSWORD:?run init}
+    depends_on:
+      database: { condition: service_healthy }
 
   webapp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: refref-webapp
-    ports:
-      - "3000:3000"
+    <<: *restricted
+    image: local/refref-webapp:${REFREF_IMAGE_TAG:?run init}
+    user: "1000:1000"
+    mem_limit: 640m
+    memswap_limit: 640m
+    cpus: 0.75
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/refref
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-your-secret-key-change-in-production}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      <<: *app-env
+      PAYOUT_MANUAL_EXECUTION_NAMESPACE: ${PAYOUT_MANUAL_EXECUTION_NAMESPACE:-}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+      - /app/apps/webapp/.next/cache:rw,noexec,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0700
     depends_on:
-      postgres:
-        condition: service_healthy
-    command: >
-      sh -c "
-        cd /app &&
-        pnpm -F @refref/coredb db:push &&
-        pnpm -F @refref/coredb db:seed &&
-        cd /app/apps/webapp &&
-        pnpm start
-      "
+      database: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/auth/sign-in').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  api:
+    <<: *restricted
+    image: local/refref-api:${REFREF_IMAGE_TAG:?run init}
+    user: "1000:1000"
+    mem_limit: 192m
+    memswap_limit: 192m
+    cpus: 0.5
+    environment: *app-env
+    depends_on:
+      database: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  refer:
+    <<: *restricted
+    image: local/refref-refer:${REFREF_IMAGE_TAG:?run init}
+    user: "1000:1000"
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    environment: *app-env
+    depends_on:
+      database: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  gateway:
+    <<: *restricted
+    image: local/refref-gateway:${REFREF_IMAGE_TAG:?run init}
+    user: nginx
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 32
+    ports: ["127.0.0.1:4310:8080"]
+    networks: [private, ingress]
+    depends_on:
+      webapp: { condition: service_healthy }
+      api: { condition: service_healthy }
+      refer: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
 volumes:
-  postgres_data:
+  database:
+
+networks:
+  private:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  ingress:

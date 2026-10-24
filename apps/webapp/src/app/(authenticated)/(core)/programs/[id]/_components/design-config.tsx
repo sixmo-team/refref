@@ -20,7 +20,7 @@ import { Switch } from "@refref/ui/components/switch";
 import { Slider } from "@refref/ui/components/slider";
 import { Separator } from "@refref/ui/components/separator";
 import { PreviewPane } from "@/components/preview-pane";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
 import { toast } from "sonner";
 import type { WidgetConfigType, ProgramConfigV1Type } from "@refref/types";
 import React from "react";
@@ -29,10 +29,11 @@ import { ReferralWidgetDialogTrigger } from "@refref/ui/components/referral-widg
 import { StickySaveBarRelative } from "@/components/sticky-save-bar";
 import { ColorPicker } from "@/components/theme/color-picker";
 import { WidgetPreview } from "@/components/widget-preview";
+import { Button } from "@refref/ui/components/button";
 
 interface DesignConfigProps {
   programId: string;
-  onStepComplete?: () => void;
+  scope: RouterInputs["program"]["getById"]["scope"];
 }
 
 // Default widget configuration
@@ -57,7 +58,7 @@ const defaultWidgetConfig: WidgetConfigType = {
   productName: "YourSaaS",
 };
 
-export function DesignConfig({ programId, onStepComplete }: DesignConfigProps) {
+export function DesignConfig({ programId, scope }: DesignConfigProps) {
   // State for preview pane
   const [showPreview, setShowPreview] = useState(true);
 
@@ -89,17 +90,17 @@ export function DesignConfig({ programId, onStepComplete }: DesignConfigProps) {
     mutedForeground: "#737373",
   });
 
-  const { data: program } = api.program.getById.useQuery(programId);
-
+  const query = api.program.getById.useQuery({ id: programId, scope });
+  const program =
+    query.error?.data?.code === "UNAUTHORIZED" ||
+    query.error?.data?.code === "FORBIDDEN"
+      ? undefined
+      : query.data;
+  const utils = api.useUtils();
   const updateConfig = api.program.updateConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Design configuration saved successfully");
-      setInitialConfig(widgetConfig); // Update initial config after save
-      setInitialLandingPageUrl(landingPageUrl); // Update initial landing page URL
-      onStepComplete?.();
-    },
-    onError: (error) => {
-      toast.error(error.message);
+    onSettled: (_result, _error, variables) => {
+      void utils.program.getById.invalidate({ id: variables.id, scope });
+      void utils.program.getAll.invalidate();
     },
   });
 
@@ -191,20 +192,31 @@ export function DesignConfig({ programId, onStepComplete }: DesignConfigProps) {
       "--muted-foreground": themeColors.mutedForeground,
     };
 
-    await updateConfig.mutateAsync({
-      id: programId,
-      config: {
-        ...currentConfig,
-        widgetConfig: {
-          ...widgetConfig,
-          cssVariables,
-        },
-        brandConfig: {
-          primaryColor: currentConfig.brandConfig?.primaryColor || "#3b82f6",
-          landingPageUrl: landingPageUrl,
+    updateConfig.mutate(
+      {
+        id: programId,
+        config: {
+          ...currentConfig,
+          widgetConfig: {
+            ...widgetConfig,
+            cssVariables,
+          },
+          brandConfig: {
+            primaryColor: currentConfig.brandConfig?.primaryColor || "#3b82f6",
+            landingPageUrl: landingPageUrl,
+          },
         },
       },
-    });
+      {
+        onSuccess: () => {
+          toast.success("Design configuration saved successfully");
+          setInitialConfig(widgetConfig);
+          setInitialLandingPageUrl(landingPageUrl);
+          setInitialThemeColors(themeColors);
+        },
+        onError: (error) => toast.error(error.message),
+      },
+    );
   };
 
   const handleDiscard = () => {
@@ -212,6 +224,14 @@ export function DesignConfig({ programId, onStepComplete }: DesignConfigProps) {
     setLandingPageUrl(initialLandingPageUrl);
     setThemeColors(initialThemeColors);
   };
+  if (query.isError && !program)
+    return (
+      <div role="alert">
+        Unable to load design settings.{" "}
+        <Button onClick={() => void query.refetch()}>Retry</Button>
+      </div>
+    );
+  if (!program) return <p>Loading design settings…</p>;
 
   return (
     <div className="flex flex-col h-full">

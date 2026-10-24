@@ -15,6 +15,7 @@ export const rewardRuleConfigV1Schema = z.object({
     event: z.string(), // "purchase", "signup", etc.
   }),
   participantType: participantTypeSchema,
+  conditions: z.object({ firstPaidOnly: z.boolean() }).strict().optional(),
   reward: z.object({
     type: rewardTypeSchema,
     amount: z.number(),

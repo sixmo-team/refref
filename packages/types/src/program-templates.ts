@@ -1,8 +1,9 @@
 import type { ProgramTemplateConfigType } from "./program-config";
+import type { TemplateRewardModule } from "./templates/shared";
+import { singleSidedTemplate } from "./templates/single-sided";
+import { doubleSidedTemplate } from "./templates/double-sided";
 
-/**
- * Program template definition
- */
+/** Serializable template descriptor used by the wizard and template catalog. */
 export interface ProgramTemplate {
   id: string;
   templateName: string;
@@ -10,6 +11,13 @@ export interface ProgramTemplate {
   config: ProgramTemplateConfigType;
   status?: "available" | "coming_soon";
 }
+
+/** Available templates carry their implementation; coming-soon entries cannot execute. */
+export type ProgramTemplateModule = ProgramTemplate &
+  (
+    | { status: "available"; rewards: TemplateRewardModule }
+    | { status: "coming_soon"; rewards?: never }
+  );
 
 /**
  * Available program template IDs
@@ -27,56 +35,12 @@ export type ProgramTemplateId =
  * Program template definitions
  * These templates define the setup wizard flow for creating programs
  */
-export const PROGRAM_TEMPLATES: Record<ProgramTemplateId, ProgramTemplate> = {
-  [PROGRAM_TEMPLATE_IDS.SINGLE_SIDED]: {
-    id: PROGRAM_TEMPLATE_IDS.SINGLE_SIDED,
-    templateName: "Single-Sided Referral Program",
-    description:
-      "Reward only the referrer - perfect for affiliate-style programs where advocates earn for bringing new customers",
-    status: "available",
-    config: {
-      schemaVersion: 1,
-      steps: [
-        {
-          key: "brand",
-          title: "Brand",
-          description: "Set your brand color",
-        },
-        {
-          key: "reward",
-          title: "Rewards",
-          description: "Configure referrer rewards",
-        },
-      ],
-      meta: {
-        rewardModel: "single-sided",
-        recommendedFor: ["affiliate", "advocate", "influencer"],
-      },
-    },
-  },
-  [PROGRAM_TEMPLATE_IDS.DOUBLE_SIDED]: {
-    id: PROGRAM_TEMPLATE_IDS.DOUBLE_SIDED,
-    templateName: "Double-Sided Referral Program",
-    description:
-      "Reward both referrer and referee - classic referral program where both parties benefit",
-    status: "coming_soon",
-    config: {
-      schemaVersion: 1,
-      steps: [
-        {
-          key: "brand",
-          title: "Brand",
-          description: "Set your brand color",
-        },
-        {
-          key: "reward",
-          title: "Rewards",
-          description: "Configure reward structure",
-        },
-      ],
-      meta: {},
-    },
-  },
+export const PROGRAM_TEMPLATES: Record<
+  ProgramTemplateId,
+  ProgramTemplateModule
+> = {
+  [PROGRAM_TEMPLATE_IDS.SINGLE_SIDED]: singleSidedTemplate,
+  [PROGRAM_TEMPLATE_IDS.DOUBLE_SIDED]: doubleSidedTemplate,
   [PROGRAM_TEMPLATE_IDS.AFFILIATE]: {
     id: PROGRAM_TEMPLATE_IDS.AFFILIATE,
     templateName: "Affiliate Program",
@@ -109,7 +73,15 @@ export const PROGRAM_TEMPLATES: Record<ProgramTemplateId, ProgramTemplate> = {
  * Get all program templates as an array
  */
 export function getAllProgramTemplates(): ProgramTemplate[] {
-  return Object.values(PROGRAM_TEMPLATES);
+  return Object.values(PROGRAM_TEMPLATES).map(
+    ({ id, templateName, description, config, status }) => ({
+      id,
+      templateName,
+      description,
+      config,
+      status,
+    }),
+  );
 }
 
 /**
@@ -119,7 +91,7 @@ export function getAllProgramTemplates(): ProgramTemplate[] {
  */
 export function getProgramTemplateById(
   id: string,
-): ProgramTemplate | undefined {
+): ProgramTemplateModule | undefined {
   return PROGRAM_TEMPLATES[id as ProgramTemplateId];
 }
 

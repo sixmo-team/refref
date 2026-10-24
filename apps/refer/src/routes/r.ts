@@ -42,9 +42,12 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
         // Single optimized query using relations
         // This does a JOIN under the hood: refcode → participant → program
         const result = await request.db.query.refcode.findFirst({
-          where: eq(refcode.code, normalizedCode),
+          where: and(
+            eq(refcode.code, normalizedCode),
+            eq(refcode.isActive, true),
+          ),
           with: {
-            participant: true,
+            participant: { columns: { id: true } },
             program: true,
           },
         });
@@ -52,10 +55,6 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
         if (!result || !result.participant) {
           return reply.code(404).send({ error: "Referral code not found" });
         }
-
-        // Type assertion needed due to Drizzle's type inference limitations with nested relations
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const participantRecord = result.participant as any;
 
         // Get the landing page URL from program config (assuming it's always present)
         const programConfig = result.program!.config as ProgramConfigV1Type;
@@ -71,26 +70,9 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Helper to encode and only add non-empty values
-        const encode = (value: string | null | undefined) =>
-          value ? Buffer.from(value, "utf-8").toString("base64") : undefined;
-
-        // Extra params, potentially enabled/disabled via config
-        const paramsObj: Record<string, string | undefined> = {
-          name: encode(participantRecord.name),
-          participantId: encode(participantRecord.id),
-        };
-
-        const searchParams = new URLSearchParams();
-        Object.entries(paramsObj).forEach(([key, value]) => {
-          if (value) searchParams.set(key, value);
-        });
-        searchParams.set("refcode", normalizedCode);
-
-        // Redirect with 307 to the product URL with encoded params
-        return reply
-          .code(307)
-          .redirect(`${redirectUrl}?${searchParams.toString()}`);
+        const destination = new URL(redirectUrl);
+        destination.searchParams.set("refcode", result.code);
+        return reply.code(307).redirect(destination.toString());
       } catch (error) {
         // Log error and return 500
         request.log.error({ error }, "Error in referral redirect handler");
@@ -142,7 +124,7 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
           with: {
             refcode: {
               with: {
-                participant: true,
+                participant: { columns: { id: true } },
                 program: true,
               },
             },
@@ -152,16 +134,13 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
         if (
           !reflinkResult ||
           !reflinkResult.refcode ||
-          !reflinkResult.refcode.participant
+          !reflinkResult.refcode.participant ||
+          !reflinkResult.refcode.isActive
         ) {
           return reply.code(404).send({ error: "Referral link not found" });
         }
 
         const result = reflinkResult.refcode;
-
-        // Type assertion needed due to Drizzle's type inference limitations with nested relations
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const participantRecord = result.participant as any;
 
         // Get the landing page URL from program config (assuming it's always present)
         const programConfig = result.program!.config as ProgramConfigV1Type;
@@ -177,27 +156,9 @@ export default async function referralRedirectRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Helper to encode and only add non-empty values
-        const encode = (value: string | null | undefined) =>
-          value ? Buffer.from(value, "utf-8").toString("base64") : undefined;
-
-        // Extra params, potentially enabled/disabled via config
-        const paramsObj: Record<string, string | undefined> = {
-          name: encode(participantRecord.name),
-          email: encode(participantRecord.email),
-          participantId: encode(participantRecord.id),
-        };
-
-        const searchParams = new URLSearchParams();
-        Object.entries(paramsObj).forEach(([key, value]) => {
-          if (value) searchParams.set(key, value);
-        });
-        searchParams.set("refcode", result.code);
-
-        // Redirect with 307 to the product URL with encoded params
-        return reply
-          .code(307)
-          .redirect(`${redirectUrl}?${searchParams.toString()}`);
+        const destination = new URL(redirectUrl);
+        destination.searchParams.set("refcode", result.code);
+        return reply.code(307).redirect(destination.toString());
       } catch (error) {
         // Log error and return 500
         request.log.error({ error }, "Error in referral redirect handler");

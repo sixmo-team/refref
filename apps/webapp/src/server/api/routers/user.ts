@@ -8,8 +8,9 @@ import { schema } from "@/server/db";
 import { eq, and, count } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { TRPCError } from "@trpc/server";
 
-const { user, productUser } = schema;
+const { user, productUser, orgUser } = schema;
 
 // Input validation schema for updating user profile
 const updateProfileSchema = z.object({
@@ -37,11 +38,15 @@ export const userRouter = createTRPCRouter({
   updateProfile: onboardingProcedure
     .input(updateProfileSchema)
     .mutation(async ({ ctx, input }) => {
+      const [current] = await ctx.db.select().from(user).where(eq(user.id, ctx.userId)).limit(1);
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      if (input.email !== current.email) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Use verified email change to update your email address" });
+      }
       const [updatedUser] = await ctx.db
         .update(user)
         .set({
           name: input.name,
-          email: input.email,
           updatedAt: new Date(),
         })
         .where(eq(user.id, ctx.userId))
@@ -59,16 +64,17 @@ export const userRouter = createTRPCRouter({
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
       const foundUser = await ctx.db
-        .select()
+        .select({ user })
         .from(user)
-        .where(eq(user.id, input.id))
+        .innerJoin(orgUser, eq(orgUser.userId, user.id))
+        .where(and(eq(user.id, input.id), eq(orgUser.orgId, ctx.activeOrganizationId)))
         .limit(1);
 
       if (!foundUser.length) {
         throw new Error("User not found");
       }
 
-      return foundUser[0];
+      return foundUser[0]!.user;
     }),
 
   // Check if user can leave the current product

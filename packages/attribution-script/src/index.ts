@@ -53,10 +53,7 @@ function getCookieOptionsFromScriptTag(): CookieOptions | undefined {
       try {
         return JSON.parse(jsonString) as CookieOptions;
       } catch (error) {
-        console.warn(
-          "Failed to parse data-cookie-options JSON, using defaults:",
-          error,
-        );
+        console.warn("Failed to parse data-cookie-options JSON; using defaults");
       }
     }
   }

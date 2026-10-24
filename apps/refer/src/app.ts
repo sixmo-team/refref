@@ -1,12 +1,13 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyInstance, LogController } from "fastify";
+import type { Writable } from "node:stream";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
-import { coredbPlugin } from "@refref/utils";
+import { coredbPlugin, safeLogSerializers } from "@refref/utils";
 import { createDb } from "@refref/coredb";
 import healthRoutes from "./routes/health.js";
 import referralRedirectRoutes from "./routes/r.js";
 
-export async function buildApp(): Promise<FastifyInstance> {
+export async function buildApp(logStream?: Writable): Promise<FastifyInstance> {
   // Validate required environment variables
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -17,10 +18,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   const db = createDb(databaseUrl);
 
   const app = Fastify({
+    logController: new LogController({ disableRequestLogging: true }),
     logger: {
       level: process.env.LOG_LEVEL || "info",
+      stream: logStream,
+      serializers: safeLogSerializers,
       transport:
-        process.env.NODE_ENV !== "production"
+        !logStream && process.env.NODE_ENV !== "production"
           ? {
               target: "pino-pretty",
               options: {

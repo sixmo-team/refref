@@ -1,16 +1,26 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  adminProcedure,
+} from "@/server/api/trpc";
 import { db, schema } from "@/server/db";
 const {
   reward: rewardTable,
   participant,
+  participantProfileColumns,
   program: programTable,
   rewardRule,
   event: eventTable,
   eventDefinition,
 } = schema;
-import { and, eq, ilike, sql, desc, asc } from "drizzle-orm";
+import { and, eq, ilike, sql, desc, asc, count } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import {
+  updateRewardApproval,
+  markLegacyRewardDisbursed,
+} from "@refref/coredb";
+import { validateProductScope } from "@refref/coredb/security";
 
 export const rewardsRouter = createTRPCRouter({
   /**
@@ -21,8 +31,15 @@ export const rewardsRouter = createTRPCRouter({
   getAll: protectedProcedure
     .input(
       z.object({
-        page: z.number().min(1),
-        pageSize: z.number().min(1).max(100),
+        page: z.number().int().min(1),
+        pageSize: z.number().int().min(1).max(100),
+        scope: z
+          .object({
+            organizationId: z.string().min(1),
+            productId: z.string().min(1),
+            userId: z.string().min(1),
+          })
+          .strict(),
         filters: z
           .array(
             z.object({
@@ -50,6 +67,16 @@ export const rewardsRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const { page, pageSize, filters, sort } = input;
+      if (
+        input.scope.organizationId !== ctx.activeOrganizationId ||
+        input.scope.userId !== ctx.userId
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.scope.productId,
+      );
 
       // Build where clause for all filters
       const whereConditions = [];
@@ -89,11 +116,11 @@ export const rewardsRouter = createTRPCRouter({
         });
       }
 
-      // Add filter to only show rewards from user's active product
+      // Use the same authorized product predicate for both count and rows.
       // Join with program to check product ownership
       const productFilter = sql`${rewardTable.programId} IN (
         SELECT id FROM ${programTable} 
-        WHERE ${programTable.productId} = ${ctx.activeProductId}
+        WHERE ${programTable.productId} = ${input.scope.productId}
       )`;
       whereConditions.push(productFilter);
 
@@ -117,7 +144,7 @@ export const rewardsRouter = createTRPCRouter({
 
       // Get total count
       const [totalResult] = await ctx.db
-        .select({ count: sql<number>`count(*)` })
+        .select({ count: count() })
         .from(rewardTable)
         .where(where);
 
@@ -127,7 +154,10 @@ export const rewardsRouter = createTRPCRouter({
       const rewards = await ctx.db
         .select({
           reward: rewardTable,
-          participant: participant,
+          participant: {
+            ...participantProfileColumns,
+            ownerUserId: participant.ownerUserId,
+          },
           program: programTable,
           rewardRule: rewardRule,
           event: eventTable,
@@ -147,6 +177,7 @@ export const rewardsRouter = createTRPCRouter({
           orderByDirection === "desc"
             ? desc(orderByColumn)
             : asc(orderByColumn),
+          asc(rewardTable.id),
         )
         .limit(pageSize)
         .offset((page - 1) * pageSize);
@@ -154,7 +185,13 @@ export const rewardsRouter = createTRPCRouter({
       // Format the response
       const data = rewards.map((row) => ({
         id: row.reward.id,
+        productId: row.program?.productId ?? "",
         eventId: row.reward.eventId,
+        payoutManaged:
+          row.reward.rewardType === "cash" &&
+          (!!row.participant?.ownerUserId ||
+            !!row.program?.config?.serverTracking ||
+            !!row.program?.config?.rewardConfig?.firstPaidOnly),
         eventType: row.eventDefinition?.type,
         participantId: row.reward.participantId,
         participantEmail: row.participant?.email,
@@ -176,120 +213,57 @@ export const rewardsRouter = createTRPCRouter({
       return { data, total };
     }),
 
-  updateApprovalStatus: protectedProcedure
+  updateApprovalStatus: adminProcedure
     .input(
-      z.object({
-        rewardId: z.string(),
-        status: z.string(), // You might want a more specific enum/type for status
-      }),
+      z
+        .object({
+          productId: z.string().min(1),
+          rewardId: z.string(),
+          status: z.enum(["approved", "rejected", "pending_disbursal"]),
+        })
+        .strict(),
     )
     .mutation(async ({ ctx, input }) => {
-      // Verify reward exists and belongs to user's product
-      const [existingReward] = await ctx.db
-        .select({
-          reward: rewardTable,
-          program: programTable,
-        })
-        .from(rewardTable)
-        .innerJoin(programTable, eq(rewardTable.programId, programTable.id))
-        .where(eq(rewardTable.id, input.rewardId))
-        .limit(1);
-
-      if (!existingReward) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Reward not found",
-        });
-      }
-
-      if (existingReward.program.productId !== ctx.activeProductId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Reward does not belong to your product",
-        });
-      }
-
-      // Update the reward status
-      const [updatedReward] = await ctx.db
-        .update(rewardTable)
-        .set({
-          status: input.status,
-          updatedAt: new Date(),
-        })
-        .where(eq(rewardTable.id, input.rewardId))
-        .returning();
-
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.productId,
+      );
+      const reward = await updateRewardApproval(
+        ctx.db,
+        input.productId,
+        input.rewardId,
+        input.status,
+      );
       return {
         success: true,
-        rewardId: input.rewardId,
-        status: input.status,
-        reward: updatedReward,
+        rewardId: reward.id,
+        status: reward.status,
+        reward,
       };
     }),
 
-  markAsDisbursed: protectedProcedure
-    .input(z.object({ rewardId: z.string() }))
+  markAsDisbursed: adminProcedure
+    .input(
+      z.object({ productId: z.string().min(1), rewardId: z.string() }).strict(),
+    )
     .mutation(async ({ ctx, input }) => {
-      // Verify reward exists and belongs to user's product
-      const [existingReward] = await ctx.db
-        .select({
-          reward: rewardTable,
-          program: programTable,
-        })
-        .from(rewardTable)
-        .innerJoin(programTable, eq(rewardTable.programId, programTable.id))
-        .where(eq(rewardTable.id, input.rewardId))
-        .limit(1);
-
-      if (!existingReward) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Reward not found",
-        });
-      }
-
-      if (existingReward.program.productId !== ctx.activeProductId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Reward does not belong to your product",
-        });
-      }
-
-      // Check if reward is in a valid state to be disbursed
-      if (existingReward.reward.status === "disbursed") {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Reward has already been disbursed",
-        });
-      }
-
-      if (existingReward.reward.status === "rejected") {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Cannot disburse a rejected reward",
-        });
-      }
-
-      const newStatus = "disbursed";
-      const disbursedAt = new Date();
-
-      // Update the reward to disbursed
-      const [updatedReward] = await ctx.db
-        .update(rewardTable)
-        .set({
-          status: newStatus,
-          disbursedAt: disbursedAt,
-          updatedAt: new Date(),
-        })
-        .where(eq(rewardTable.id, input.rewardId))
-        .returning();
-
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.productId,
+      );
+      const reward = await markLegacyRewardDisbursed(
+        ctx.db,
+        input.productId,
+        input.rewardId,
+      );
       return {
         success: true,
-        rewardId: input.rewardId,
-        status: newStatus,
-        disbursedAt,
-        reward: updatedReward,
+        rewardId: reward.id,
+        status: reward.status,
+        disbursedAt: reward.disbursedAt,
+        reward,
       };
     }),
 
@@ -300,7 +274,7 @@ export const rewardsRouter = createTRPCRouter({
       const [rewardData] = await ctx.db
         .select({
           reward: rewardTable,
-          participant: participant,
+          participant: participantProfileColumns,
           program: programTable,
           rewardRule: rewardRule,
           event: eventTable,
@@ -411,14 +385,18 @@ export const rewardsRouter = createTRPCRouter({
   getStatsByProgram: protectedProcedure
     .input(z.string())
     .query(async ({ ctx, input: programId }) => {
-      // Verify program belongs to user's product
+      // Authorize through the identified program's actual product.
       const [program] = await ctx.db
-        .select()
+        .select({ id: programTable.id })
         .from(programTable)
+        .innerJoin(
+          schema.product,
+          eq(schema.product.id, programTable.productId),
+        )
         .where(
           and(
             eq(programTable.id, programId),
-            eq(programTable.productId, ctx.activeProductId),
+            eq(schema.product.orgId, ctx.activeOrganizationId),
           ),
         )
         .limit(1);
@@ -430,62 +408,25 @@ export const rewardsRouter = createTRPCRouter({
         });
       }
 
-      // Get reward counts by status
-      const statusCounts = await ctx.db
+      const groups = await ctx.db
         .select({
-          status: rewardTable.status,
-          count: sql<number>`count(*)`,
-          totalAmount: sql<number>`sum(cast(${rewardTable.amount} as decimal))`,
-        })
-        .from(rewardTable)
-        .where(eq(rewardTable.programId, programId))
-        .groupBy(rewardTable.status);
-
-      // Get reward counts by type
-      const typeCounts = await ctx.db
-        .select({
+          currency: rewardTable.currency,
           type: rewardTable.rewardType,
-          count: sql<number>`count(*)`,
-          totalAmount: sql<number>`sum(cast(${rewardTable.amount} as decimal))`,
+          status: rewardTable.status,
+          count: sql<number>`count(*)::integer`,
+          amount: sql<string>`COALESCE(sum(${rewardTable.amount}),0)::text`,
         })
         .from(rewardTable)
         .where(eq(rewardTable.programId, programId))
-        .groupBy(rewardTable.rewardType);
-
-      // Calculate totals
-      const totalRewards = statusCounts.reduce(
-        (sum, curr) => sum + curr.count,
-        0,
-      );
-      const totalAmount = statusCounts.reduce(
-        (sum, curr) => sum + (curr.totalAmount || 0),
-        0,
-      );
-      const totalDisbursed = statusCounts
-        .filter((sc) => sc.status === "disbursed")
-        .reduce((sum, curr) => sum + (curr.totalAmount || 0), 0);
-
+        .groupBy(
+          rewardTable.currency,
+          rewardTable.rewardType,
+          rewardTable.status,
+        );
       return {
-        statusCounts: statusCounts.reduce(
-          (acc, curr) => {
-            acc[curr.status] = {
-              count: curr.count,
-              amount: curr.totalAmount || 0,
-            };
-            return acc;
-          },
-          {} as Record<string, { count: number; amount: number }>,
-        ),
-        typeCounts: typeCounts.map((tc) => ({
-          type: tc.type,
-          count: tc.count,
-          amount: tc.totalAmount || 0,
-        })),
+        groups,
         summary: {
-          totalRewards,
-          totalAmount,
-          totalDisbursed,
-          pendingAmount: totalAmount - totalDisbursed,
+          totalRewards: groups.reduce((sum, row) => sum + row.count, 0),
         },
       };
     }),

@@ -16,12 +16,14 @@ The refer server provides public endpoints for:
 # Start refer server (port 3002)
 pnpm -F @refref/refer dev
 
-# Run tests
-pnpm -F @refref/refer test
-
-# Run tests in watch mode
-pnpm -F @refref/refer test:watch
+# Set TEST_DATABASE_URL to a disposable, migrated test database, then run tests.
+pnpm -F @refref/refer exec vitest run --maxWorkers=1 --minWorkers=1
 ```
+
+Redirect regressions execute real SQL against `TEST_DATABASE_URL`; its database
+name must contain `test`. They create randomized multi-product fixtures and
+delete only those fixtures afterward. Never point this setting at an existing
+application database. Health tests retain their isolated database mock.
 
 ### Environment Variables
 
@@ -43,21 +45,24 @@ NODE_ENV="development"
 ### Referral Link Redirect
 
 ```
-GET /:slug
+GET /:code
+GET /:productSlug/:slug
 ```
 
-Redirects to the target URL associated with the referral link slug.
+Globally unique referral codes resolve directly. Vanity slugs resolve only
+within the named product, even when multiple products use the same slug.
 
-**Performance:**
-
-- Optimized with database index on `referral_link.slug`
-- Single JOIN query for fast lookups
-- Minimal latency for redirect operations
+The destination is the program's configured landing page. Existing query
+parameters (including repeated values) and fragments are preserved. The only
+attribution parameter added is the opaque `refcode`, replacing any stale
+`refcode` in that URL. Participant names, email addresses and participant IDs
+are never added, including in encoded form.
 
 **Response:**
 
-- `302 Found` - Redirects to target URL
-- `404 Not Found` - Invalid or expired referral link
+- `307 Temporary Redirect` - Redirects to the landing page with opaque attribution
+- `404 Not Found` - Unknown product, code or vanity link
+- `500 Internal Server Error` - Landing page missing or redirect processing failed
 
 ### Health Check
 

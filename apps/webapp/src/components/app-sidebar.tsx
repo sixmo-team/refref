@@ -48,6 +48,8 @@ const data = {
       url: "/rewards",
       icon: IconAward,
     },
+    { title: "Payouts", url: "/payouts", icon: IconAward },
+    { title: "My earnings", url: "/participant-portal", icon: IconAward },
     {
       title: "Analytics",
       url: "/analytics",
