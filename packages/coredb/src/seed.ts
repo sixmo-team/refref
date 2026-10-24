@@ -360,6 +360,7 @@ export const SEED_DATA = {
     {
       id: SEED_IDS.REFERRAL_1,
       referrerId: SEED_IDS.PARTICIPANT_1,
+      programId: SEED_IDS.PROGRAM_2,
       externalId: SEED_IDS.USER_3,
       email: "test3@test.com",
       name: null,

@@ -26,6 +26,7 @@ const ENTITY_PREFIXES = {
   reflink: "rl",
   referral: "ref",
   event: "evt",
+  payout: "pay",
 } as const;
 
 /**

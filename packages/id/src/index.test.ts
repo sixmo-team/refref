@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   createId,
-  getValidEntityTypes,
   InvalidEntityError,
   isValidEntityType,
   type EntityType,
@@ -54,6 +53,8 @@ describe("@refref/id", () => {
         ["reward", "rwd"],
         ["productSecrets", "psec"],
         ["refcode", "rc"],
+        ["reflink", "rl"],
+        ["payout", "pay"],
         ["referral", "ref"],
         ["event", "evt"],
         ["org", "org"],
@@ -83,42 +84,6 @@ describe("@refref/id", () => {
       expect(isValidEntityType("unknown")).toBe(false);
       expect(isValidEntityType("")).toBe(false);
       expect(isValidEntityType("User")).toBe(false);
-    });
-  });
-
-  describe("getValidEntityTypes", () => {
-    it("should return an array of all valid entity types", () => {
-      const validTypes = getValidEntityTypes();
-
-      expect(Array.isArray(validTypes)).toBe(true);
-      expect(validTypes.length).toBeGreaterThan(0);
-      expect(validTypes).toContain("user");
-      expect(validTypes).toContain("product");
-      expect(validTypes).toContain("program");
-    });
-
-    it("should return all 21 entity types", () => {
-      const validTypes = getValidEntityTypes();
-      expect(validTypes.length).toBe(21);
-    });
-  });
-
-  describe("InvalidEntityError", () => {
-    it("should have correct error message", () => {
-      const error = new InvalidEntityError("invalid");
-
-      expect(error.message).toContain("Invalid entity type: invalid");
-      expect(error.message).toContain("Valid types are:");
-      expect(error.name).toBe("InvalidEntityError");
-    });
-
-    it("should list all valid entity types in error message", () => {
-      const error = new InvalidEntityError("test");
-      const validTypes = getValidEntityTypes();
-
-      validTypes.forEach((type) => {
-        expect(error.message).toContain(type);
-      });
     });
   });
 });

@@ -13,6 +13,9 @@ export * from "./widget-config";
 export * from "./widget-css-defaults";
 export * from "./event-config";
 export * from "./reward-config";
+export * from "./referral-contract";
+export * from "./referral-money";
+export * from "./template-rewards";
 
 export const referralLinkSchema = z.object({
   code: z.string(),

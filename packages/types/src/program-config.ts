@@ -53,7 +53,7 @@ const verificationConfigSchema = z.object({
   method: verificationMethodEnum,
 });
 
-export const RewardCurrencies = ["USD", "EUR", "GBP"] as const;
+export const RewardCurrencies = ["USD", "EUR", "GBP", "RUB"] as const;
 
 export const currencySchema = z.enum(RewardCurrencies);
 
@@ -62,12 +62,14 @@ export type CurrencyType = z.infer<typeof currencySchema>;
 // Simplified reward configuration for initial implementation
 // Only supporting cash rewards for referrers and discounts for referees
 export const rewardConfigSchema = z.object({
+  firstPaidOnly: z.boolean().optional(),
   referrer: z
     .object({
       type: z.literal("cash"),
       valueType: z.enum(["fixed", "percentage"]),
       value: z.number().positive(),
       currency: currencySchema,
+      basis: z.enum(["base_amount", "payable_amount"]).optional(),
     })
     .optional(),
   referee: z
@@ -107,6 +109,17 @@ export type NotificationConfigV1Type = z.infer<
 export const programConfigV1Schema = z.object({
   schemaVersion: z.literal(1),
   actions: z.array(z.any()).optional(), // Legacy field, being phased out
+  rewardConfig: rewardConfigSchema.optional(),
+  serverTracking: z
+    .object({
+      calculationVersion: z.literal(1),
+      approvedBy: z.string().min(1),
+      approvedAt: z.string().datetime(),
+      termsFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      ownershipVerified: z.literal(true),
+    })
+    .strict()
+    .optional(),
   brandConfig: brandConfigSchema.optional(),
   notification: notificationConfigV1Schema,
   templateConfig: programTemplateConfigSchema.optional(),

@@ -2,6 +2,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 
+const poolOptions = { max: 3, idle_timeout: 20, connect_timeout: 5 };
+
 /**
  * Cache the database connections in development. This avoids creating a new connection on every HMR
  * update.
@@ -20,7 +22,7 @@ if (!globalForDb.connections) {
  * @returns Drizzle database instance
  */
 export function createDb(databaseUrl: string) {
-  const isDev = process.env.NODE_ENV !== "production";
+  const isDev = process.env.NODE_ENV === "development";
 
   let conn: postgres.Sql;
 
@@ -30,12 +32,12 @@ export function createDb(databaseUrl: string) {
     if (cachedConn) {
       conn = cachedConn;
     } else {
-      conn = postgres(databaseUrl);
+      conn = postgres(databaseUrl, poolOptions);
       globalForDb.connections.set(databaseUrl, conn);
     }
   } else {
     // In production, create new connection
-    conn = postgres(databaseUrl);
+    conn = postgres(databaseUrl, poolOptions);
   }
 
   return drizzle(conn, { schema });
@@ -48,3 +50,6 @@ export * as schema from "./schema.js";
 
 // Export organization-level service account utilities
 export * from "./lib/organization-service-account.js";
+export * from "./reward-engine.js";
+export * from "./referrals.js";
+export * from "./payouts.js";
