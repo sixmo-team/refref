@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "outDir": "./dist",
     "strict": true,
@@ -17,10 +17,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["node", "@playwright/test"]
   },
-  "include": [
-    "sanity/**/*",
-    "utils/**/*",
-    "playwright.config.ts"
-  ],
+  "include": ["sanity/**/*", "utils/**/*", "playwright.config.ts"],
   "exclude": ["node_modules", "dist", "test-results"]
 }

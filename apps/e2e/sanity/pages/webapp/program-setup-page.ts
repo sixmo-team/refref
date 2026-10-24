@@ -14,18 +14,19 @@ export class ProgramSetupPage extends BasePage {
    * Create a new referral program by selecting the first available template
    * Expects NO programs to exist (fresh state)
    * Waits for program creation and redirect to setup page with credentials
-   * @param programName - Name of the program (note: actual name is set by template)
+   * @param productName - Explicitly selected authorized product
    * @returns The program ID if creation is successful
    */
-  async createProgram(programName: string): Promise<string | null> {
+  async createProgram(productName: string): Promise<string> {
     console.log("Creating new program...");
 
     // Navigate to programs page
     await this.page.goto("/programs");
     await this.page.waitForLoadState("domcontentloaded");
 
-    // Wait a moment for page to settle
-    await this.page.waitForTimeout(1000);
+    await this.page
+      .getByRole("combobox", { name: "Authorized product" })
+      .selectOption({ label: productName });
 
     // Verify NO existing programs (fresh state)
     const existingCard = this.page.locator('div[data-slot="card"]').first();
@@ -64,7 +65,9 @@ export class ProgramSetupPage extends BasePage {
     // Extract program ID from URL (/programs/{id}/setup)
     const url = this.page.url();
     const match = url.match(/\/programs\/([^\/]+)\/setup/);
-    const programId = match ? match[1] : null;
+    if (!match?.[1])
+      throw new Error("Created program ID is missing from setup URL");
+    const programId = match[1];
 
     console.log(`✓ Program created with ID: ${programId}`);
     return programId;
@@ -127,7 +130,6 @@ export class ProgramSetupPage extends BasePage {
     console.log(`  Product ID: ${productId}`);
     console.log(`  Program ID: ${programId}`);
     console.log(`  Client ID: ${clientId}`);
-    console.log(`  Client Secret: ${clientSecret.substring(0, 10)}...`);
 
     return {
       productId,
@@ -151,33 +153,7 @@ export class ProgramSetupPage extends BasePage {
     const colorInput = this.page.getByTestId("brand-color-hex");
     await expect(colorInput).toBeVisible({ timeout: 10000 });
 
-    // Set the redirect URL for referral links
-    const redirectUrlInput = this.page
-      .locator(
-        'input[name="redirectUrl"], input[placeholder*="redirect"], input[id*="redirect"]',
-      )
-      .first();
-    const inputVisible = await redirectUrlInput.isVisible().catch(() => false);
-
-    if (inputVisible) {
-      await redirectUrlInput.clear();
-      await redirectUrlInput.fill(redirectUrl);
-      console.log(`  Set redirect URL to: ${redirectUrl}`);
-    } else {
-      console.log(
-        "  Redirect URL input not found, checking for alternative selectors...",
-      );
-      // Try alternative selectors
-      const altInput = this.page
-        .locator("input")
-        .filter({ hasText: /redirect/i });
-      const altVisible = await altInput.isVisible().catch(() => false);
-      if (altVisible) {
-        await altInput.clear();
-        await altInput.fill(redirectUrl);
-        console.log(`  Set redirect URL to: ${redirectUrl}`);
-      }
-    }
+    await this.page.getByTestId("landing-page-url").fill(redirectUrl);
 
     // Brand color is already set to default (#3b82f6), just click Next
     const nextButton = this.page.getByTestId("setup-next-btn");
@@ -189,7 +165,7 @@ export class ProgramSetupPage extends BasePage {
 
   /**
    * Complete the rewards configuration step
-   * Accepts default reward settings and clicks Complete Setup
+   * Submits the current reward configuration and completes setup.
    */
   async completeRewardStep() {
     console.log("Completing rewards configuration step...");
@@ -198,7 +174,6 @@ export class ProgramSetupPage extends BasePage {
     const referrerToggle = this.page.getByTestId("referrer-reward-enabled");
     await expect(referrerToggle).toBeVisible({ timeout: 10000 });
 
-    // Rewards are already enabled by default, just click Complete Setup
     const completeButton = this.page.getByTestId("setup-next-btn");
     await expect(completeButton).toBeVisible();
     await completeButton.click();

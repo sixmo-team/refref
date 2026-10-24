@@ -22,7 +22,7 @@ export class ServerManager {
     } catch (error) {
       // Fall back to checking root path
       try {
-        const response = await fetch(`http://localhost:${port}/`, {
+        await fetch(`http://localhost:${port}/`, {
           method: "GET",
           signal: AbortSignal.timeout(2000),
         });
@@ -59,7 +59,7 @@ export class ServerManager {
       } catch (error) {
         // Try root path as fallback
         try {
-          const response = await fetch(`${url}/`, {
+          await fetch(`${url}/`, {
             method: "GET",
             signal: AbortSignal.timeout(2000),
           });
@@ -131,10 +131,19 @@ export class ServerManager {
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.includes("application/json")) {
           const data = await response.json();
-          return {
-            healthy: true,
-            message: data.message || data.status || "OK",
-          };
+          const message =
+            data !== null &&
+            typeof data === "object" &&
+            "message" in data &&
+            typeof data.message === "string"
+              ? data.message
+              : data !== null &&
+                  typeof data === "object" &&
+                  "status" in data &&
+                  typeof data.status === "string"
+                ? data.status
+                : "OK";
+          return { healthy: true, message };
         }
 
         return { healthy: true, message: "OK" };
@@ -145,7 +154,7 @@ export class ServerManager {
 
     // Fall back to checking root path (separate try/catch to avoid timeout accumulation)
     try {
-      const rootResponse = await fetch(`${serviceUrl}/`, {
+      await fetch(`${serviceUrl}/`, {
         method: "GET",
         signal: AbortSignal.timeout(3000),
       });
