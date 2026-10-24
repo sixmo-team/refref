@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 /**
  * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially useful
  * for Docker builds.
@@ -6,6 +7,14 @@ import type { NextConfig } from "next";
 import "@/env";
 
 const config: NextConfig = {
+  output: "standalone",
+  outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
+  experimental: {
+    cpus: 1,
+    workerThreads: false,
+    webpackMemoryOptimizations: true,
+    serverActions: { bodySizeLimit: "256kb" },
+  },
   async redirects() {
     return [
       {
@@ -15,40 +24,10 @@ const config: NextConfig = {
       },
     ];
   },
-  async rewrites() {
-    return [
-      {
-        source: "/ingest/static/:path*",
-        destination: "https://us-assets.i.posthog.com/static/:path*",
-      },
-      {
-        source: "/ingest/:path*",
-        destination: "https://us.i.posthog.com/:path*",
-      },
-    ];
-  },
   skipTrailingSlashRedirect: true,
   transpilePackages: ["@refref/ui"],
   typescript: {
     ignoreBuildErrors: false,
-  },
-  webpack: (config) => {
-    // using asset/source to load the script
-    // causes minify etc to run and typeof window becomes undefined
-    config.module.rules.push({
-      test: /\.es\.js$/,
-      use: ["raw-loader"],
-    });
-
-    return config;
-  },
-  turbopack: {
-    rules: {
-      // Configure Turbopack to handle .es.js scripts as assets
-      "*.es.js": {
-        loaders: ["raw-loader"],
-      },
-    },
   },
 };
 

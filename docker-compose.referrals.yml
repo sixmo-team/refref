@@ -1,0 +1,13 @@
+# Optional HTTP-only link; operator creates the external network with --internal.
+# Use with docker-compose.yml. No dependency on the backend stack or database sharing.
+services:
+  gateway:
+    networks:
+      private: {}
+      ingress: {}
+      refref-billing:
+        aliases: [refref-gateway]
+networks:
+  refref-billing:
+    external: true
+    name: refref-billing

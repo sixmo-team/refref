@@ -19,6 +19,10 @@ out/
 .env.*
 **/.env*
 .infisical.json
+.local/
+.superpowers/
+compose.test.yml
+vitest.security.config.ts
 
 # IDE and editor files
 .vscode/

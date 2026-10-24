@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => ({
       styleId: "widget-styles",
     }) */ dts({
       insertTypesEntry: true,
-      outDir: "dist/types",
+      outDirs: "dist/types",
       exclude: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     }),
   ],

@@ -13,34 +13,38 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
+    },
+    "./security": {
+      "types": "./dist/security.d.ts",
+      "import": "./dist/security.js"
     }
   },
   "scripts": {
-    "db:generate": "infisical run --env=dev -- drizzle-kit generate || drizzle-kit generate",
-    "db:migrate": "infisical run --env=dev -- drizzle-kit migrate || drizzle-kit migrate",
-    "db:push": "infisical run --env=dev -- drizzle-kit push || drizzle-kit push",
-    "db:studio": "infisical run --env=dev -- drizzle-kit studio || drizzle-kit studio",
-    "db:seed": "infisical run --env=dev -- tsx src/seed.ts seed || tsx src/seed.ts seed",
-    "db:deleteseed": "infisical run --env=dev -- tsx src/seed.ts delete || tsx src/seed.ts delete",
-    "migrate:org-api-keys": "infisical run --env=dev -- tsx scripts/migrate-to-org-api-keys.ts || tsx scripts/migrate-to-org-api-keys.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx src/seed.ts seed",
+    "db:deleteseed": "tsx src/seed.ts delete",
+    "migrate:org-api-keys": "tsx scripts/migrate-to-org-api-keys.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build": "tsc",
     "type:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@paralleldrive/cuid2": "^2.2.2",
+    "@paralleldrive/cuid2": "^2.3.1",
     "@refref/id": "workspace:*",
     "@refref/types": "workspace:*",
-    "drizzle-orm": "^0.44.7",
-    "postgres": "^3.4.5",
-    "zod": "^4.0.17"
+    "drizzle-orm": "0.45.4",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@refref/typescript-config": "workspace:*",
-    "@types/node": "^24.3.0",
-    "drizzle-kit": "^0.31.6",
-    "tsx": "^4.19.2",
-    "typescript": "^5.9.2"
+    "@types/node": "^24.19.2",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }

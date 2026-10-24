@@ -2,32 +2,24 @@
   "name": "refref",
   "private": true,
   "scripts": {
-    "build": "turbo run build",
-    "dev": "infisical run --env=dev -- turbo run dev || turbo run dev",
+    "build": "turbo run build --concurrency=1",
+    "dev": "turbo run dev --concurrency=20",
     "portless:list": "portless list",
     "portless:proxy": "portless proxy start",
-    "lint": "turbo run lint",
+    "lint": "turbo run lint --concurrency=1",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "type:check": "turbo run type:check",
-    "test": "infisical run --env=dev -- turbo run test || turbo run test",
-    "test:run": "infisical run --env=dev -- turbo run test:run || turbo run test:run"
+    "type:check": "turbo run type:check --concurrency=1",
+    "test": "turbo run test --concurrency=1",
+    "test:run": "turbo run test:run --concurrency=1",
+    "dev:local": "node scripts/dev.mjs"
   },
   "devDependencies": {
-    "@types/bad-words": "^3.0.3",
-    "prettier": "^3.5.0",
-    "turbo": "^2.4.2",
+    "prettier": "^3.9.10",
+    "turbo": "^2.11.9",
     "typescript": "5.7.3"
   },
-  "packageManager": "pnpm@10.23.0",
+  "packageManager": "pnpm@10.34.7",
   "engines": {
     "node": ">=20"
-  },
-  "pnpm": {
-    "overrides": {
-      "@babel/core": "7.28.5"
-    }
-  },
-  "dependencies": {
-    "bad-words": "^4.0.0"
   }
 }

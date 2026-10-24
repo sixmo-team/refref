@@ -29,18 +29,18 @@
     "type:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@react-email/components": "^0.0.29",
-    "@react-email/render": "^1.0.3",
-    "react": "^19.2.3"
+    "@react-email/components": "^1.0.12",
+    "@react-email/render": "^2.1.1",
+    "react": "^19.3.1"
   },
   "devDependencies": {
     "@refref/eslint-config": "workspace:*",
     "@refref/typescript-config": "workspace:*",
-    "@types/node": "^22.15.3",
-    "@types/react": "^19.2.0",
-    "bunchee": "^6.4.0",
-    "eslint": "^9.26.0",
-    "react-email": "^3.0.3",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "bunchee": "^7.0.2",
+    "eslint": "^9.39.5",
+    "react-email": "^6.11.3",
     "typescript": "5.8.3"
   }
 }
