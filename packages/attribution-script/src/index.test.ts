@@ -286,10 +286,6 @@ describe("RefRef Attribution Script - End-to-End Tests", () => {
         configurable: true,
       });
 
-      const consoleWarnSpy = vi
-        .spyOn(console, "warn")
-        .mockImplementation(() => {});
-
       // Create script with invalid JSON
       const script = createConfigScript(undefined, "{invalid-json}");
       cleanupScripts.push(script);
@@ -297,16 +293,8 @@ describe("RefRef Attribution Script - End-to-End Tests", () => {
       await import("./index");
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should log warning
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to parse data-cookie-options JSON"),
-        expect.anything(),
-      );
-
       // Cookie should still be set with defaults
       expect(getCookie("refref-refcode")).toBe("TEST123");
-
-      consoleWarnSpy.mockRestore();
     });
   });
 

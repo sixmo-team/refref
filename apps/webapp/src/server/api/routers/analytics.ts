@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { db, schema } from "@/server/db";
-import { eq, and, sql, desc, gte, lte, count } from "drizzle-orm";
+import { eq, and, sql, desc, gte, lte, lt, count } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
 const { program: programTable, participant, referral, product } = schema;
+const dayMs = 86_400_000;
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !value.startsWith("0000-") && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Invalid calendar date");
 
 export const analyticsRouter = createTRPCRouter({
   getStats: protectedProcedure
@@ -44,7 +49,7 @@ export const analyticsRouter = createTRPCRouter({
         })
         .from(referral)
         .innerJoin(participant, eq(participant.id, referral.referrerId))
-        .where(eq(participant.productId, program.productId));
+        .where(and(eq(participant.productId, program.productId), eq(referral.programId, programId)));
 
       // Calculate trends (compare last 30 days vs previous 30 days)
       const thirtyDaysAgo = new Date();
@@ -60,6 +65,7 @@ export const analyticsRouter = createTRPCRouter({
         .where(
           and(
             eq(participant.productId, program.productId),
+            eq(referral.programId, programId),
             gte(referral.createdAt, thirtyDaysAgo),
           ),
         );
@@ -72,6 +78,7 @@ export const analyticsRouter = createTRPCRouter({
         .where(
           and(
             eq(participant.productId, program.productId),
+            eq(referral.programId, programId),
             gte(referral.createdAt, sixtyDaysAgo),
             lte(referral.createdAt, thirtyDaysAgo),
           ),
@@ -131,9 +138,19 @@ export const analyticsRouter = createTRPCRouter({
     .input(
       z.object({
         programId: z.string(),
-        days: z.number().min(1).max(365).optional(),
-        startDate: z.string().optional(),
-        endDate: z.string().optional(),
+        days: z.number().int().min(1).max(365).optional(),
+        startDate: dateOnly.optional(),
+        endDate: dateOnly.optional(),
+      }).superRefine((input, ctx) => {
+        if ((input.startDate === undefined) !== (input.endDate === undefined)) {
+          ctx.addIssue({ code: "custom", message: "Supply both date boundaries" });
+        }
+        if (input.startDate && input.endDate) {
+          const span = Date.parse(input.endDate) - Date.parse(input.startDate);
+          if (!Number.isFinite(span) || span < 0 || span >= 365 * dayMs) {
+            ctx.addIssue({ code: "custom", message: "Date range must contain 1 to 365 inclusive days" });
+          }
+        }
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -161,13 +178,12 @@ export const analyticsRouter = createTRPCRouter({
       let endDate: Date;
 
       if (input.startDate && input.endDate) {
-        startDate = new Date(input.startDate);
-        endDate = new Date(input.endDate);
+        startDate = new Date(`${input.startDate}T00:00:00.000Z`);
+        endDate = new Date(`${input.endDate}T00:00:00.000Z`);
       } else {
-        const days = input.days || 30;
-        endDate = new Date();
-        startDate = new Date();
-        startDate.setDate(startDate.getDate() - days);
+        const days = input.days ?? 30;
+        endDate = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+        startDate = new Date(endDate.getTime() - (days - 1) * dayMs);
       }
 
       // Get daily referral counts
@@ -181,8 +197,9 @@ export const analyticsRouter = createTRPCRouter({
         .where(
           and(
             eq(participant.productId, program.productId),
+            eq(referral.programId, input.programId),
             gte(referral.createdAt, startDate),
-            lte(referral.createdAt, endDate),
+            lt(referral.createdAt, new Date(endDate.getTime() + dayMs)),
           ),
         )
         .groupBy(sql`DATE(${referral.createdAt})`)
@@ -206,7 +223,7 @@ export const analyticsRouter = createTRPCRouter({
             referrals: dateMap.get(dateStr) || 0,
           });
         }
-        current.setDate(current.getDate() + 1);
+        current.setUTCDate(current.getUTCDate() + 1);
       }
 
       return result;
@@ -243,7 +260,7 @@ export const analyticsRouter = createTRPCRouter({
           referralCount: count(referral.id),
         })
         .from(participant)
-        .leftJoin(referral, eq(referral.referrerId, participant.id))
+        .leftJoin(referral, and(eq(referral.referrerId, participant.id), eq(referral.programId, programId)))
         .where(eq(participant.productId, program.productId))
         .groupBy(participant.id, participant.name, participant.email)
         .orderBy(desc(count(referral.id)))

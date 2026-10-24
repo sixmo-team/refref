@@ -13,6 +13,10 @@ export const env = createEnv({
       .default("development"),
     BETTER_AUTH_SECRET: z.string().min(1),
     BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
+    DISABLE_SIGN_UP: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     RESEND_API_KEY: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().min(1).default("google_client_id"),
     GOOGLE_CLIENT_SECRET: z.string().min(1).default("google_client_secret"),
@@ -32,7 +36,6 @@ export const env = createEnv({
     // NEXT_PUBLIC_CLIENTVAR: z.string(),
     NEXT_PUBLIC_APP_URL: z.url().default("http://localhost:3000"),
     NEXT_PUBLIC_REFER_URL: z.url().default("http://localhost:3002"),
-    NEXT_PUBLIC_ASSETS_URL: z.url().optional().default("http://localhost:8787"),
     NEXT_PUBLIC_REFREF_PRODUCT_ID: z.string().optional(),
     NEXT_PUBLIC_REFREF_PROGRAM_ID: z.string().optional(),
     NEXT_PUBLIC_ENABLE_PASSWORD_AUTH: z
@@ -55,12 +58,6 @@ export const env = createEnv({
               .filter(Boolean)
           : [],
       ),
-    NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
-    NEXT_PUBLIC_POSTHOG_HOST: z.string().default("https://us.i.posthog.com"),
-    NEXT_PUBLIC_POSTHOG_ENABLED: z
-      .enum(["true", "false"])
-      .default("false")
-      .transform((val) => val === "true"),
   },
 
   /**
@@ -72,10 +69,10 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
+    DISABLE_SIGN_UP: process.env.DISABLE_SIGN_UP,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_REFER_URL: process.env.NEXT_PUBLIC_REFER_URL,
-    NEXT_PUBLIC_ASSETS_URL: process.env.NEXT_PUBLIC_ASSETS_URL,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     REFERRAL_PROGRAM_CLIENT_ID: process.env.REFERRAL_PROGRAM_CLIENT_ID,
@@ -89,9 +86,6 @@ export const env = createEnv({
     NEXT_PUBLIC_ENABLED_SOCIAL_AUTH:
       process.env.NEXT_PUBLIC_ENABLED_SOCIAL_AUTH,
     NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM,
-    NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
-    NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-    NEXT_PUBLIC_POSTHOG_ENABLED: process.env.NEXT_PUBLIC_POSTHOG_ENABLED,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

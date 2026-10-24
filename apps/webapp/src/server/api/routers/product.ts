@@ -5,7 +5,7 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import { schema } from "@/server/db";
-const { product, productSecrets, productUser } = schema;
+const { product, productSecrets, productUser, orgUser } = schema;
 import assert from "assert";
 import { createId, init } from "@paralleldrive/cuid2";
 import { randomBytes } from "crypto";
@@ -17,6 +17,25 @@ import {
   paymentProviders,
 } from "@/lib/validations/onboarding";
 import { and, eq } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
+
+async function requireProductCreationPermission(
+  db: Pick<typeof import("@/server/db").db, "select">,
+  organizationId: string,
+  userId: string,
+) {
+  const [member] = await db
+    .select({ role: orgUser.role })
+    .from(orgUser)
+    .where(and(eq(orgUser.orgId, organizationId), eq(orgUser.userId, userId)))
+    .limit(1);
+  if (member?.role !== "owner" && member?.role !== "admin") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Organization administrator required",
+    });
+  }
+}
 
 const slugGenerator = init({
   length: 7,
@@ -79,6 +98,7 @@ export const productRouter = createTRPCRouter({
           "No active organization. Please create an organization first.",
         );
       }
+      await requireProductCreationPermission(ctx.db, activeOrgId, ctx.userId);
 
       // Create the product within the organization
       const [newProduct] = await ctx.db
@@ -125,6 +145,7 @@ export const productRouter = createTRPCRouter({
           "No active organization. Please create an organization first.",
         );
       }
+      await requireProductCreationPermission(ctx.db, activeOrgId, ctx.userId);
 
       // Create the product with onboarding data within the organization
       const [newProduct] = await ctx.db
@@ -170,29 +191,55 @@ export const productRouter = createTRPCRouter({
     }),
 
   // Get all products in the active organization
-  getAll: protectedProcedure.query(async ({ ctx }) => {
-    const products = await ctx.db
-      .select()
-      .from(product)
-      .where(eq(product.orgId, ctx.activeOrganizationId));
+  getAll: protectedProcedure
+    .input(
+      z
+        .object({ organizationId: z.string(), userId: z.string() })
+        .strict()
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
+      if (
+        input &&
+        (input.organizationId !== ctx.activeOrganizationId ||
+          input.userId !== ctx.userId)
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
+      const products = await ctx.db
+        .select()
+        .from(product)
+        .where(eq(product.orgId, ctx.activeOrganizationId));
 
-    return products;
-  }),
+      return products;
+    }),
 
   // Get the first product in the active organization
-  getCurrent: protectedProcedure.query(async ({ ctx }) => {
-    const [firstProduct] = await ctx.db
-      .select()
-      .from(product)
-      .where(eq(product.orgId, ctx.activeOrganizationId))
-      .limit(1);
+  getCurrent: protectedProcedure
+    .input(
+      z
+        .object({ organizationId: z.string(), userId: z.string() })
+        .strict()
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
+      if (
+        input &&
+        (input.organizationId !== ctx.activeOrganizationId ||
+          input.userId !== ctx.userId)
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
+      const [firstProduct] = await ctx.db
+        .select()
+        .from(product)
+        .where(eq(product.orgId, ctx.activeOrganizationId))
+        .limit(1);
 
-    if (!firstProduct) {
-      throw new Error("No products found in your organization");
-    }
+      if (!firstProduct) {
+        throw new Error("No products found in your organization");
+      }
 
-    return firstProduct;
-  }),
+      return firstProduct;
+    }),
 
   // Get a specific product by ID
   getById: protectedProcedure

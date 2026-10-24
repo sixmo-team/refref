@@ -39,7 +39,7 @@ function setupWidget() {
       }
     });
   } catch (error) {
-    console.warn("Widget setup failed:", error);
+    console.warn("Widget setup failed");
   }
 }
 
@@ -132,9 +132,8 @@ function mountWidget() {
 
     document.body.appendChild(shadowHost);
 
-    console.log("Widget mounted successfully with config:", config);
   } catch (error) {
-    console.warn("Widget mounting failed:", error);
+    console.warn("Widget mounting failed");
   }
 }
 

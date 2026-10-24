@@ -28,8 +28,7 @@ export const paymentProviders = [
 // ───────────────────────────────────────────────────────────────
 // Unified schema for the entire onboarding flow
 // ───────────────────────────────────────────────────────────────
-export const onboardingSchema = z
-  .object({
+const onboardingFieldsSchema = z.object({
     productName: z.string().min(1, "Product name is required").max(100),
     productUrl: z
       .string()
@@ -52,8 +51,9 @@ export const onboardingSchema = z
       message: "Please select a payment provider",
     }),
     otherPaymentProvider: z.string(),
-  })
-  .refine(
+  });
+
+export const onboardingSchema = onboardingFieldsSchema.refine(
     (data) => {
       // If "other" is selected, otherPaymentProvider must be provided
       if (data.paymentProvider === "other") {
@@ -74,20 +74,20 @@ export const onboardingSchema = z
 // Step-level schemas derived from the master onboarding schema
 // ───────────────────────────────────────────────────────────────
 
-export const productInfoSchema = onboardingSchema.pick({
+export const productInfoSchema = onboardingFieldsSchema.pick({
   productName: true,
   productUrl: true,
 });
 
-export const appTypeSchema = onboardingSchema.pick({
+export const appTypeSchema = onboardingFieldsSchema.pick({
   appType: true,
 });
 
-export const useCaseSchema = onboardingSchema.pick({
+export const useCaseSchema = onboardingFieldsSchema.pick({
   useCase: true,
 });
 
-export const paymentProviderSchema = onboardingSchema
+export const paymentProviderSchema = onboardingFieldsSchema
   .pick({ paymentProvider: true, otherPaymentProvider: true })
   .refine(
     (data) => {

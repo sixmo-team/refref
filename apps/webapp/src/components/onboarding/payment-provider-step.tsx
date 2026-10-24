@@ -48,7 +48,6 @@ export const PaymentProviderStep = withFieldGroup({
     const onBefore = () => {
       // ! important otherwise if we go to previous step, the errors from next step will still be present
       Object.values(group.fieldsMap).forEach((field) => {
-        console.log("field is ", field);
         group.form.setFieldMeta(field, (m) => ({
           ...m,
           errors: [],

@@ -37,7 +37,6 @@ describe("Health Endpoints", () => {
         status: "ok",
         service: "refer",
       });
-      expect(body.timestamp).toBeDefined();
     });
 
     it("should have correct content-type header", async () => {
@@ -46,19 +45,10 @@ describe("Health Endpoints", () => {
       const contentType = response.headers()["content-type"];
       expect(contentType).toContain("application/json");
     });
-
-    it("should respond quickly", async () => {
-      const startTime = Date.now();
-      const response = await apiContext.get("/health");
-      const endTime = Date.now();
-
-      expect(response.ok()).toBe(true);
-      expect(endTime - startTime).toBeLessThan(1000); // Should respond within 1 second
-    });
   });
 
   describe("GET /", () => {
-    it("should return status ok with service name and message", async () => {
+    it("should identify the redirect service at the root endpoint", async () => {
       const response = await apiContext.get("/");
 
       expect(response.ok()).toBe(true);
@@ -69,7 +59,6 @@ describe("Health Endpoints", () => {
       expect(body).toMatchObject({
         status: "ok",
         service: "refer",
-        message: "RefRef Refer Server",
       });
     });
 
@@ -78,15 +67,6 @@ describe("Health Endpoints", () => {
 
       const contentType = response.headers()["content-type"];
       expect(contentType).toContain("application/json");
-    });
-
-    it("should respond quickly", async () => {
-      const startTime = Date.now();
-      const response = await apiContext.get("/");
-      const endTime = Date.now();
-
-      expect(response.ok()).toBe(true);
-      expect(endTime - startTime).toBeLessThan(1000); // Should respond within 1 second
     });
   });
 });

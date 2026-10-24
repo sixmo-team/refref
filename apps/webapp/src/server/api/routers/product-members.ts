@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, adminProcedure } from "@/server/api/trpc";
 import { schema, DBType } from "@/server/db";
 import { eq, and } from "drizzle-orm";
 import { count } from "drizzle-orm";
@@ -288,7 +288,7 @@ export const productMembersRouter = createTRPCRouter({
   /**
    * Get pending/expired invitations for the active organization.
    */
-  listInvitations: protectedProcedure.query(async ({ ctx }) => {
+  listInvitations: adminProcedure.query(async ({ ctx }) => {
     const data = await ctx.db
       .select()
       .from(invitation)
@@ -324,7 +324,7 @@ export const productMembersRouter = createTRPCRouter({
   /**
    * Invite a member (creates invitation).
    */
-  invite: protectedProcedure
+  invite: adminProcedure
     .input(
       z.object({
         email: z.string().email(),
@@ -407,17 +407,12 @@ export const productMembersRouter = createTRPCRouter({
   /**
    * Cancel invitation.
    */
-  cancelInvitation: protectedProcedure
+  cancelInvitation: adminProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      // Check if user has permission to cancel invitations
-      if (ctx.organizationUserRole === "member") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message:
-            "You don't have permission to cancel invitations. Only owners and admins can cancel invitations.",
-        });
-      }
+      const [pending] = await ctx.db.select({ id: invitation.id }).from(invitation)
+        .where(and(eq(invitation.id, input.id), eq(invitation.organizationId, ctx.activeOrganizationId))).limit(1);
+      if (!pending) throw new TRPCError({ code: "NOT_FOUND", message: "Invitation not found" });
 
       await auth.api.cancelInvitation({
         body: {
@@ -430,7 +425,7 @@ export const productMembersRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  resendInvitation: protectedProcedure
+  resendInvitation: adminProcedure
     .input(
       z.object({
         email: z.string(),

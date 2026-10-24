@@ -209,12 +209,10 @@ After your first deployment:
 4. Add custom domain: `assets.refref.ai`
 5. Cloudflare will automatically provision SSL certificate
 
-Then update your webapp environment:
-
-```bash
-# In apps/webapp/.env (or production environment)
-NEXT_PUBLIC_ASSETS_URL="https://assets.refref.ai"
-```
+The deployed webapp loads scripts only from its own `/assets` path. Publish or
+proxy the built bundles there through the application's gateway; configuring an
+external asset origin in the webapp is no longer supported. Standalone SDK
+consumers may still use the Cloudflare URLs directly.
 
 ### Cloudflare Pages Setup (Alternative)
 
@@ -338,12 +336,9 @@ Use the CDN URLs in your production application:
 
 **In Next.js (apps/webapp):**
 
-```typescript
-// Configured via NEXT_PUBLIC_ASSETS_URL environment variable
-<Script
-  src={`${env.NEXT_PUBLIC_ASSETS_URL}/attribution.v1.js`}
-  strategy="beforeInteractive"
-/>
+```tsx
+<Script src="/assets/attribution.v1.js" strategy="afterInteractive" />
+<Script src="/assets/widget.v1.js" strategy="afterInteractive" />
 ```
 
 ### In Development
@@ -359,11 +354,14 @@ http://localhost:8787/widget.v1.js
 http://localhost:8787/attribution.js
 http://localhost:8787/widget.js
 
-# Configure in apps/webapp/.env (already set as default):
-NEXT_PUBLIC_ASSETS_URL="http://localhost:8787"
 ```
 
 The assets dev server watches package dist files and auto-rebuilds when they change, providing the same routing and caching logic as production.
+
+For the webapp, serve or proxy those bundles at `/assets` on the webapp's own
+origin. Do not point browser script URLs at visitor-localhost services or an
+external CDN. The isolated local deployment's gateway serves the built files
+directly.
 
 ## Versioning Strategy
 
@@ -552,7 +550,6 @@ pnpm -F @refref/assets exec wrangler tail refref-assets
 
 | Variable                 | Purpose           | Example                    |
 | ------------------------ | ----------------- | -------------------------- |
-| `NEXT_PUBLIC_ASSETS_URL` | CDN URL in webapp | `https://assets.refref.ai` |
 | `CLOUDFLARE_API_TOKEN`   | CI/CD deployment  | Set in GitHub Secrets      |
 
 ### Deployment Checklist
@@ -563,7 +560,7 @@ pnpm -F @refref/assets exec wrangler tail refref-assets
 - [ ] Deploy to Cloudflare Workers
 - [ ] Verify deployment at workers.dev URL
 - [ ] Configure custom domain (optional)
-- [ ] Update `NEXT_PUBLIC_ASSETS_URL` in webapp
+- [ ] Serve built bundles through the webapp's same-origin `/assets` gateway
 - [ ] Test scripts loading in production
 
 ## Related Documentation

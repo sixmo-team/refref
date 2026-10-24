@@ -15,6 +15,10 @@ import { logger } from "@/lib/logger";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { eq } from "drizzle-orm";
+import { safeError } from "@refref/utils";
+import { ReferralError } from "@refref/coredb";
+import { isAPIError } from "better-auth/api";
+import { SecurityError } from "@refref/coredb/security";
 
 /**
  * 1. CONTEXT
@@ -34,9 +38,15 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
   const session = await auth.api.getSession({
     headers,
   });
-  const organizationUser = await auth.api.getActiveMember({
-    headers,
-  });
+  let organizationUser = null;
+  if (session?.session.activeOrganizationId) {
+    try {
+      organizationUser = await auth.api.getActiveMember({ headers });
+    } catch (error) {
+      if (!isAPIError(error) || error.body?.code !== "MEMBER_NOT_FOUND")
+        throw error;
+    }
+  }
 
   // Get the active product for the active organization (one product per org for now)
   let activeProductId: string | null = null;
@@ -54,9 +64,7 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
     activeOrganizationId: session?.session?.activeOrganizationId,
     organizationUserId: organizationUser?.id,
     organizationUserRole: organizationUser?.role as
-      | "owner"
-      | "admin"
-      | "member",
+      "owner" | "admin" | "member",
     activeProductId,
     userId: session?.user?.id,
     logger: logger,
@@ -73,9 +81,13 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
 const t = initTRPC.context<typeof createTRPCContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
-    console.error(error);
+    logger.error("tRPC request failed", { code: error.code });
     return {
       ...shape,
+      message:
+        error.code === "INTERNAL_SERVER_ERROR"
+          ? "Internal Server Error"
+          : shape.message,
       data: {
         ...shape.data,
         zodError:
@@ -107,52 +119,57 @@ export const createCallerFactory = t.createCallerFactory;
 export const createTRPCRouter = t.router;
 
 /**
- * Middleware for timing procedure execution and adding an artificial delay in development.
- *
- * You can remove this if you don't like it, but it can help catch unwanted waterfalls by simulating
- * network latency that would occur in production but not in local development.
- */
-const timingMiddleware = t.middleware(async ({ next, path }) => {
-  const start = Date.now();
-
-  if (t._config.isDev) {
-    // artificial delay in dev
-    const waitMs = Math.floor(Math.random() * 400) + 100;
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-
-  const result = await next();
-
-  const end = Date.now();
-  console.log(`[TRPC] ${path} took ${end - start}ms to execute`);
-
-  return result;
-});
-
-/**
  * Public (unauthenticated) procedure
  *
  * This is the base piece you use to build new queries and mutations on your tRPC API. It does not
  * guarantee that a user querying is authorized, but you can still access user session data if they
  * are logged in.
  */
-export const publicProcedure = t.procedure.use(timingMiddleware);
-
-//! these require the presence of a session
-export const onboardingProcedure = t.procedure.use(async ({ ctx, next }) => {
-  if (!ctx.session || !ctx.userId) {
-    throw new TRPCError({ code: "UNAUTHORIZED" });
+export const publicProcedure = t.procedure.use(async ({ next }) => {
+  const result = await next();
+  if (!result.ok && result.error.code === "INTERNAL_SERVER_ERROR") {
+    const cause = result.error.cause;
+    if (cause instanceof ReferralError || cause instanceof SecurityError) {
+      throw new TRPCError({
+        code:
+          cause.statusCode === 409
+            ? "CONFLICT"
+            : cause.statusCode === 404
+              ? "NOT_FOUND"
+              : cause.statusCode === 400
+                ? "BAD_REQUEST"
+                : cause.statusCode === 503
+                  ? "SERVICE_UNAVAILABLE"
+                  : "FORBIDDEN",
+        message: cause.message,
+      });
+    }
+    logger.error("tRPC operation failed", safeError(result.error.cause));
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Internal Server Error",
+    });
   }
-  return next({
-    ctx: {
-      session: ctx.session,
-      userId: ctx.userId,
-    },
-  });
+  return result;
 });
 
+//! these require the presence of a session
+export const onboardingProcedure = publicProcedure.use(
+  async ({ ctx, next }) => {
+    if (!ctx.session || !ctx.userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+    return next({
+      ctx: {
+        session: ctx.session,
+        userId: ctx.userId,
+      },
+    });
+  },
+);
+
 //! these require the presence of an active organization id and active product
-export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
+export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
   // check both cause ts :)
   if (!ctx.session || !ctx.userId) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -177,4 +194,17 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
       userId: ctx.userId,
     },
   });
+});
+
+export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  if (
+    ctx.organizationUserRole !== "owner" &&
+    ctx.organizationUserRole !== "admin"
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Organization administrator required",
+    });
+  }
+  return next();
 });
