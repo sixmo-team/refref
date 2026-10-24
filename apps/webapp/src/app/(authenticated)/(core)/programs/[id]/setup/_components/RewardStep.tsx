@@ -1,106 +1,55 @@
 import React, { forwardRef, useImperativeHandle } from "react";
-import { useForm } from "@tanstack/react-form";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
+import { rewardConfigFromForm, type RewardConfigType } from "@refref/types";
 import {
-  programTemplateRewardStepSchemaV2,
-  ProgramTemplateRewardStepV2Type,
-  RewardConfigType,
-} from "@refref/types";
-import { RewardStepForm } from "./RewardStepForm";
-
+  RewardStepForm,
+  DEFAULT_REWARD_FORM,
+  useRewardForm,
+} from "./RewardStepForm";
+import { Button } from "@refref/ui/components/button";
 interface RewardStepProps {
   programId: string;
-  onStepComplete?: () => void;
+  scope: RouterInputs["program"]["getById"]["scope"];
 }
-
-const DEFAULTS: ProgramTemplateRewardStepV2Type = {
-  referrerReward: {
-    enabled: true,
-    valueType: "fixed",
-    value: 10,
-    currency: "USD",
-  },
-  refereeReward: {
-    enabled: true,
-    valueType: "percentage",
-    value: 20,
-    currency: "USD",
-    minPurchaseAmount: 50,
-    validityDays: 30,
-  },
-};
-
 export interface RewardStepRef {
   submitForm: () => Promise<RewardConfigType | undefined>;
 }
-
 export const RewardStep = forwardRef<RewardStepRef, RewardStepProps>(
-  ({ programId }, ref) => {
-    const { data: program } = api.program.getById.useQuery(programId);
-
-    const form = useForm({
-      defaultValues: DEFAULTS,
-      validators: {
-        onSubmit: programTemplateRewardStepSchemaV2,
-      },
-      onSubmit: async ({ value }) => {
-        console.log("RewardStep internal onSubmit called:", value);
-        // Just return the data, don't save here
-        return Promise.resolve();
-      },
-    });
-
+  ({ programId, scope }, ref) => {
+    const query = api.program.getById.useQuery({ id: programId, scope });
+    const program =
+      query.error?.data?.code === "UNAUTHORIZED" ||
+      query.error?.data?.code === "FORBIDDEN"
+        ? undefined
+        : query.data;
+    const form = useRewardForm(DEFAULT_REWARD_FORM);
     useImperativeHandle(ref, () => ({
       submitForm: async () => {
-        // Validate the form
         await form.validateAllFields("submit");
-
-        // Check if the form is valid
-        if (form.state.isValidating || !form.state.isValid) {
-          console.log("RewardStep validation failed", form.state.errors);
-          throw new Error(
-            "Reward configuration is invalid. Please check the fields.",
-          );
-        }
-
-        const value = form.state.values;
-
-        // Transform the data to match the expected schema
-        const rewardConfig = {
-          referrer: {
-            type: "cash" as const,
-            valueType: value.referrerReward.valueType,
-            value: value.referrerReward.value,
-            currency: value.referrerReward.currency,
-          },
-          referee: {
-            type: "discount" as const,
-            valueType: value.refereeReward.valueType,
-            value: value.refereeReward.value,
-            currency: value.refereeReward.currency,
-            minPurchaseAmount: value.refereeReward.minPurchaseAmount,
-            validityDays: value.refereeReward.validityDays,
-          },
-        };
-
-        console.log(
-          "RewardStep submitForm resolving with config:",
-          rewardConfig,
+        if (!program || form.state.isValidating || !form.state.isValid)
+          throw new Error("Reward configuration is invalid");
+        return rewardConfigFromForm(
+          form.state.values,
+          program.programTemplateId,
         );
-
-        // Return the transformed reward config
-        return value.referrerReward.enabled || value.refereeReward.enabled
-          ? rewardConfig
-          : undefined;
       },
     }));
-
+    if (query.isError && !program)
+      return (
+        <div role="alert">
+          Unable to load reward settings.{" "}
+          <Button onClick={() => void query.refetch()}>Retry</Button>
+        </div>
+      );
     return (
       <div className="max-w-3xl mx-auto space-y-6 p-4">
-        <RewardStepForm form={form} />
+        {program ? (
+          <RewardStepForm form={form} templateId={program.programTemplateId} />
+        ) : (
+          <p>Loading reward settings…</p>
+        )}
       </div>
     );
   },
 );
-
 RewardStep.displayName = "RewardStep";

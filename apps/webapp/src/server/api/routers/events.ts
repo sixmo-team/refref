@@ -2,20 +2,27 @@ import { z } from "zod";
 import {
   createTRPCRouter,
   protectedProcedure,
-  publicProcedure,
+  adminProcedure,
 } from "@/server/api/trpc";
 import { db, schema } from "@/server/db";
 const {
   event: eventTable,
   eventDefinition,
+  participantProfileColumns,
   participant,
   program: programTable,
   referral: referralTable,
 } = schema;
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, sql, count, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { eventMetadataV1Schema } from "@refref/types";
-import { processEventForRewards } from "@/server/services/reward-engine";
+import { processEventForRewards } from "@refref/coredb";
+import {
+  insertScopedEvent,
+  SecurityError,
+  validateProductScope,
+} from "@refref/coredb/security";
+import { safeError } from "@refref/utils";
 
 // Input schema for creating events
 const createEventSchema = z.object({
@@ -29,81 +36,33 @@ const createEventSchema = z.object({
 
 export const eventsRouter = createTRPCRouter({
   // Create a new event
-  create: publicProcedure
+  create: adminProcedure
     .input(createEventSchema)
     .mutation(async ({ ctx, input }) => {
-      // Validate event definition exists
-      const [eventDef] = await ctx.db
-        .select()
-        .from(eventDefinition)
-        .where(eq(eventDefinition.type, input.eventType))
-        .limit(1);
-
-      if (!eventDef) {
+      if (input.productId !== ctx.activeProductId) {
         throw new TRPCError({
-          code: "NOT_FOUND",
-          message: `Event definition not found for type: ${input.eventType}`,
+          code: "FORBIDDEN",
+          message: "Product does not match the active product",
         });
       }
-
-      // Validate participant if provided
-      if (input.participantId) {
-        const [participantRecord] = await ctx.db
-          .select()
-          .from(participant)
-          .where(eq(participant.id, input.participantId))
-          .limit(1);
-
-        if (!participantRecord) {
+      let newEvent;
+      try {
+        newEvent = await insertScopedEvent(ctx.db, input);
+      } catch (error) {
+        if (error instanceof SecurityError) {
           throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Participant not found",
+            code:
+              error.statusCode === 409
+                ? "CONFLICT"
+                : error.statusCode === 400
+                  ? "BAD_REQUEST"
+                  : "FORBIDDEN",
+            message: error.message,
           });
         }
+        throw error;
       }
-
-      // Validate referral if provided
-      if (input.referralId) {
-        const [referralRecord] = await ctx.db
-          .select()
-          .from(referralTable)
-          .where(eq(referralTable.id, input.referralId))
-          .limit(1);
-
-        if (!referralRecord) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Referral not found",
-          });
-        }
-      }
-
-      // Create the event
-      const [newEvent] = await ctx.db
-        .insert(eventTable)
-        .values({
-          productId: input.productId,
-          programId: input.programId || null,
-          participantId: input.participantId || null,
-          referralId: input.referralId || null,
-          eventDefinitionId: eventDef.id,
-          status: "pending",
-          metadata: input.metadata || { schemaVersion: 1, source: "api" },
-        })
-        .returning();
-
-      if (!newEvent) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to create event",
-        });
-      }
-
-      // Process event for rewards asynchronously
-      // In production, this would be a queue job
-      processEventForRewards(ctx.db, newEvent.id).catch((error) => {
-        console.error("Failed to process event for rewards:", error);
-      });
+      await processEventForRewards(ctx.db, newEvent.id);
 
       return newEvent;
     }),
@@ -159,7 +118,7 @@ export const eventsRouter = createTRPCRouter({
         .select({
           event: eventTable,
           eventDefinition: eventDefinition,
-          participant: participant,
+          participant: participantProfileColumns,
           referral: referralTable,
         })
         .from(eventTable)
@@ -196,7 +155,7 @@ export const eventsRouter = createTRPCRouter({
         .select({
           event: eventTable,
           eventDefinition: eventDefinition,
-          participant: participant,
+          participant: participantProfileColumns,
           referral: referralTable,
         })
         .from(eventTable)
@@ -234,7 +193,7 @@ export const eventsRouter = createTRPCRouter({
     }),
 
   // Update event status (for admin/debugging purposes)
-  updateStatus: protectedProcedure
+  updateStatus: adminProcedure
     .input(
       z.object({
         eventId: z.string(),
@@ -242,7 +201,7 @@ export const eventsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      // Verify event belongs to active product
+      // Authorize the identified event's product in the current organization.
       const [existingEvent] = await ctx.db
         .select()
         .from(eventTable)
@@ -256,12 +215,16 @@ export const eventsRouter = createTRPCRouter({
         });
       }
 
-      if (existingEvent.productId !== ctx.activeProductId) {
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        existingEvent.productId,
+      );
+      if (existingEvent.metadata?.schemaVersion === 2)
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Event does not belong to your product",
+          message: "Accepted financial events cannot be manually rewritten",
         });
-      }
 
       const [updatedEvent] = await ctx.db
         .update(eventTable)
@@ -276,8 +239,15 @@ export const eventsRouter = createTRPCRouter({
   getAll: protectedProcedure
     .input(
       z.object({
-        page: z.number().min(1),
-        pageSize: z.number().min(1).max(100),
+        page: z.number().int().min(1),
+        pageSize: z.number().int().min(1).max(100),
+        scope: z
+          .object({
+            organizationId: z.string().min(1),
+            productId: z.string().min(1),
+            userId: z.string().min(1),
+          })
+          .strict(),
         filters: z
           .array(
             z.object({
@@ -298,12 +268,31 @@ export const eventsRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const { page, pageSize, filters, sort } = input;
+      if (
+        input.scope.organizationId !== ctx.activeOrganizationId ||
+        input.scope.userId !== ctx.userId
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.scope.productId,
+      );
 
       // Build where clause for all filters
       const whereConditions = [];
 
       if (filters && filters.length > 0) {
         filters.forEach((filter) => {
+          if (
+            filter.id === "eventName" &&
+            filter.variant === "text" &&
+            typeof filter.value === "string"
+          ) {
+            whereConditions.push(
+              ilike(eventDefinition.name, `%${filter.value}%`),
+            );
+          }
           // Filter by eventType
           if (
             filter.id === "eventType" &&
@@ -353,8 +342,8 @@ export const eventsRouter = createTRPCRouter({
         });
       }
 
-      // Add filter to only show events from user's active product
-      whereConditions.push(eq(eventTable.productId, ctx.activeProductId));
+      // Use the same authorized product predicate for both count and rows.
+      whereConditions.push(eq(eventTable.productId, input.scope.productId));
 
       const where =
         whereConditions.length > 0 ? and(...whereConditions) : undefined;
@@ -373,7 +362,7 @@ export const eventsRouter = createTRPCRouter({
 
       // Get total count
       const [totalResult] = await ctx.db
-        .select({ count: sql<number>`count(*)` })
+        .select({ count: count() })
         .from(eventTable)
         .leftJoin(
           eventDefinition,
@@ -390,7 +379,7 @@ export const eventsRouter = createTRPCRouter({
         .select({
           event: eventTable,
           eventDefinition: eventDefinition,
-          participant: participant,
+          participant: participantProfileColumns,
           program: programTable,
           referral: referralTable,
         })
@@ -407,6 +396,7 @@ export const eventsRouter = createTRPCRouter({
           orderByDirection === "desc"
             ? desc(orderByColumn)
             : asc(orderByColumn),
+          asc(eventTable.id),
         )
         .limit(pageSize)
         .offset((page - 1) * pageSize);

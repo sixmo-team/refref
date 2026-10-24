@@ -10,32 +10,34 @@ import { Label } from "@refref/ui/components/label";
 import { Input } from "@refref/ui/components/input";
 import { Switch } from "@refref/ui/components/switch";
 import { Textarea } from "@refref/ui/components/textarea";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
 import { toast } from "sonner";
 import { useForm } from "@tanstack/react-form";
 import { StickySaveBarRelative } from "@/components/sticky-save-bar";
 import { defaultNotificationConfig } from "@/lib/forms/notification-config-schema";
+import { Button } from "@refref/ui/components/button";
 
 interface NotificationSetupProps {
   programId: string;
-  onStepComplete?: () => void;
+  scope: RouterInputs["program"]["getById"]["scope"];
 }
 
 export function NotificationSetup({
   programId,
-  onStepComplete,
+  scope,
 }: NotificationSetupProps) {
   // Fetch current program to get the existing config
-  const { data: program } = api.program.getById.useQuery(programId);
-
+  const query = api.program.getById.useQuery({ id: programId, scope });
+  const program =
+    query.error?.data?.code === "UNAUTHORIZED" ||
+    query.error?.data?.code === "FORBIDDEN"
+      ? undefined
+      : query.data;
+  const utils = api.useUtils();
   const updateConfig = api.program.updateConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Notification settings saved successfully");
-      form.reset();
-      onStepComplete?.();
-    },
-    onError: (error) => {
-      toast.error(error.message);
+    onSettled: (_result, _error, variables) => {
+      void utils.program.getById.invalidate({ id: variables.id, scope });
+      void utils.program.getAll.invalidate();
     },
   });
 
@@ -51,13 +53,22 @@ export function NotificationSetup({
       }
 
       // Update the notification config while preserving the rest of the config
-      await updateConfig.mutateAsync({
-        id: programId,
-        config: {
-          ...program.config,
-          notification: value.notificationConfig as any,
+      updateConfig.mutate(
+        {
+          id: programId,
+          config: {
+            ...program.config,
+            notification: value.notificationConfig as any,
+          },
         },
-      });
+        {
+          onSuccess: () => {
+            toast.success("Notification settings saved successfully");
+            form.reset();
+          },
+          onError: (error) => toast.error(error.message),
+        },
+      );
     },
   });
 
@@ -94,6 +105,14 @@ export function NotificationSetup({
 
   // Get current notification config from form
   const notificationConfig = form.state.values.notificationConfig;
+  if (query.isError && !program)
+    return (
+      <div role="alert">
+        Unable to load notification settings.{" "}
+        <Button onClick={() => void query.refetch()}>Retry</Button>
+      </div>
+    );
+  if (!program) return <p>Loading notification settings…</p>;
 
   return (
     <div className="flex flex-col h-full">

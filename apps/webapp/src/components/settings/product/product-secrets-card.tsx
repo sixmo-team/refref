@@ -9,21 +9,49 @@ import { Input } from "@refref/ui/components/input";
 import { Label } from "@refref/ui/components/label";
 import { Skeleton } from "@refref/ui/components/skeleton";
 import { Separator } from "@refref/ui/components/separator";
-import { api } from "@/trpc/react";
+import { api, type RouterInputs } from "@/trpc/react";
+import { AuthorizedProductScope } from "@/components/authorized-product-scope";
+import { useDeniedRead } from "@/hooks/use-denied-read";
 
 export function ProductSecretsCard() {
+  return (
+    <AuthorizedProductScope adminOnly>
+      {(scope) => <ScopedProductSecretsCard scope={scope} />}
+    </AuthorizedProductScope>
+  );
+}
+
+function ScopedProductSecretsCard({
+  scope,
+}: {
+  scope: RouterInputs["events"]["getAll"]["scope"];
+}) {
   const [showSecret, setShowSecret] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const { data: product, isLoading: productLoading } =
-    api.product.getCurrent.useQuery();
-
-  const { data: secrets, isLoading: secretsLoading } =
-    api.productSecrets.get.useQuery(product?.id ?? "", {
-      enabled: !!product?.id,
-    });
-
-  const isLoading = productLoading || secretsLoading;
+  const query = api.productSecrets.get.useQuery({
+    productId: scope.productId,
+    scope: { userId: scope.userId, organizationId: scope.organizationId },
+  });
+  const utils = api.useUtils();
+  const blocked = useDeniedRead({
+    scopeKey: JSON.stringify([
+      scope.userId,
+      scope.organizationId,
+      scope.productId,
+    ]),
+    denied:
+      query.error?.data?.code === "UNAUTHORIZED" ||
+      query.error?.data?.code === "FORBIDDEN",
+    queries: [query],
+    reset: () =>
+      void utils.productSecrets.get.reset({
+        productId: scope.productId,
+        scope: { userId: scope.userId, organizationId: scope.organizationId },
+      }),
+  });
+  const secrets = blocked || query.isError ? undefined : query.data;
+  const isLoading = query.isLoading;
 
   const copyToClipboard = async (value: string, fieldName: string) => {
     try {
@@ -36,6 +64,18 @@ export function ProductSecretsCard() {
     }
   };
 
+  if (blocked || query.isError)
+    return (
+      <div role="alert">
+        Unable to load product credentials.{" "}
+        <Button
+          disabled={query.isFetching}
+          onClick={() => void query.refetch()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
   if (isLoading || !secrets) {
     return (
       <Card className="w-full pb-0 text-start">

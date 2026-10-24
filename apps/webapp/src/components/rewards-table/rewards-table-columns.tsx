@@ -13,31 +13,20 @@ import {
 import { api } from "@/trpc/react"; // For calling mutations
 import { toast } from "sonner"; // For notifications
 import { DateDisplay } from "@/components/date-display";
+import { useRef } from "react";
+import Link from "next/link";
+import type { RouterOutputs, RouterInputs } from "@/trpc/react";
 
-// Define the interface for a Reward row in the table
-export interface Reward {
-  id: string;
-  eventId: string | null;
-  eventType: string | null;
-  participantId: string;
-  participantEmail: string | null;
-  participantExternalId: string | null;
-  participantName: string | null;
-  programId: string;
-  programName: string | null;
-  rewardType: string;
-  amount: string | null; // Decimal is often stringified
-  currency: string | null;
-  status: string;
-  disbursedAt: string | null; // Timestamp can be string or Date
-  createdAt: string; // Timestamp can be string or Date
-  updatedAt: string;
-  metadata: any;
-  ruleName: string | null;
-}
+export type Reward = Omit<
+  RouterOutputs["rewards"]["getAll"]["data"][number],
+  "createdAt" | "updatedAt" | "disbursedAt"
+> & { createdAt: string; updatedAt: string; disbursedAt: string | null };
 
-export function getRewardsTableColumns(): ColumnDef<Reward>[] {
-  return [
+export function getRewardsTableColumns(
+  isAdmin: boolean,
+  scope: RouterInputs["rewards"]["getAll"]["scope"],
+): ColumnDef<Reward>[] {
+  const columns: ColumnDef<Reward>[] = [
     {
       accessorKey: "eventType",
       header: ({ column }) => (
@@ -182,17 +171,46 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
     {
       id: "actions",
       header: () => <div className="text-right">Actions</div>,
-      cell: ({ row }) => {
+      cell: function RewardActionsCell({ row }) {
         const reward = row.original;
         const utils = api.useUtils(); // For invalidating queries
+        const busy = useRef(false);
 
-        const { mutate: updateApproval, isPending: isUpdatingApproval } =
-          api.rewards.updateApprovalStatus.useMutation({
+        const resourceOptions = {
+          onMutate: () => scope,
+          onSettled: (
+            _data: unknown,
+            _error: unknown,
+            input: RouterInputs["rewards"]["markAsDisbursed"],
+            originatingScope:
+              RouterInputs["rewards"]["getAll"]["scope"] | undefined,
+          ) => {
+            if (!originatingScope) return;
+            void utils.rewards.getAll.invalidate({
+              scope: { ...originatingScope, productId: input.productId },
+            });
+            void utils.participantPortal.summary.invalidate({
+              productId: input.productId,
+            });
+            void utils.participantPortal.history.invalidate({
+              productId: input.productId,
+            });
+          },
+        };
+        const approval =
+          api.rewards.updateApprovalStatus.useMutation(resourceOptions);
+        const isUpdatingApproval = approval.isPending;
+        const updateApproval = (
+          input: RouterInputs["rewards"]["updateApprovalStatus"],
+        ) =>
+          approval.mutate(input, {
+            onSettled: () => {
+              busy.current = false;
+            },
             onSuccess: (data) => {
               toast.success(
                 `Reward ${data.rewardId} status updated to ${data.status}`,
               );
-              utils.rewards.getAll.invalidate(); // Refetch rewards list
             },
             onError: (error) => {
               toast.error(
@@ -201,11 +219,18 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
             },
           });
 
-        const { mutate: markDisbursed, isPending: isMarkingDisbursed } =
-          api.rewards.markAsDisbursed.useMutation({
+        const disbursement =
+          api.rewards.markAsDisbursed.useMutation(resourceOptions);
+        const isMarkingDisbursed = disbursement.isPending;
+        const markDisbursed = (
+          input: RouterInputs["rewards"]["markAsDisbursed"],
+        ) =>
+          disbursement.mutate(input, {
+            onSettled: () => {
+              busy.current = false;
+            },
             onSuccess: (data) => {
               toast.success(`Reward ${data.rewardId} marked as disbursed.`);
-              utils.rewards.getAll.invalidate(); // Refetch rewards list
             },
             onError: (error) => {
               toast.error(
@@ -222,7 +247,8 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
           reward.status !== "rejected";
         const canReject =
           reward.status !== "rejected" && reward.status !== "disbursed";
-        const canMarkDisbursed = reward.status === "approved";
+        const canMarkDisbursed =
+          reward.status === "approved" && !reward.payoutManaged;
 
         return (
           <div className="text-right">
@@ -238,12 +264,15 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
                 <DropdownMenuSeparator />
                 {canApprove && (
                   <DropdownMenuItem
-                    onClick={() =>
+                    onClick={() => {
+                      if (busy.current) return;
+                      busy.current = true;
                       updateApproval({
+                        productId: reward.productId,
                         rewardId: reward.id,
                         status: "approved",
-                      })
-                    }
+                      });
+                    }}
                     disabled={isUpdatingApproval}
                   >
                     <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
@@ -252,12 +281,15 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
                 )}
                 {canReject && (
                   <DropdownMenuItem
-                    onClick={() =>
+                    onClick={() => {
+                      if (busy.current) return;
+                      busy.current = true;
                       updateApproval({
+                        productId: reward.productId,
                         rewardId: reward.id,
                         status: "rejected",
-                      })
-                    }
+                      });
+                    }}
                     disabled={isUpdatingApproval}
                   >
                     <XCircle className="mr-2 h-4 w-4 text-red-500" />
@@ -266,11 +298,27 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
                 )}
                 {canMarkDisbursed && (
                   <DropdownMenuItem
-                    onClick={() => markDisbursed({ rewardId: reward.id })}
+                    onClick={() => {
+                      if (busy.current) return;
+                      busy.current = true;
+                      markDisbursed({
+                        productId: reward.productId,
+                        rewardId: reward.id,
+                      });
+                    }}
                     disabled={isMarkingDisbursed}
                   >
                     <DollarSign className="mr-2 h-4 w-4 text-blue-500" />
                     Mark as Disbursed
+                  </DropdownMenuItem>
+                )}
+                {reward.payoutManaged && (
+                  <DropdownMenuItem asChild>
+                    <Link
+                      href={`/payouts?productId=${encodeURIComponent(reward.productId)}`}
+                    >
+                      Manage payout requests
+                    </Link>
                   </DropdownMenuItem>
                 )}
                 {!canApprove && !canReject && !canMarkDisbursed && (
@@ -287,4 +335,5 @@ export function getRewardsTableColumns(): ColumnDef<Reward>[] {
       enableColumnFilter: false,
     },
   ];
+  return columns.filter((column) => column.id !== "actions" || isAdmin);
 }

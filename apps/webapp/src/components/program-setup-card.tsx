@@ -23,20 +23,21 @@ export function SetupCard({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 py-1.5 px-2 rounded-md text-sm transition-colors cursor-pointer",
+        "flex items-center gap-2 rounded-md text-sm transition-colors",
         !isActive ? "text-muted-foreground" : "text-foreground",
         className,
       )}
-      onClick={onClick}
     >
-      <span className="truncate">{title}</span>
+      <button
+        type="button"
+        aria-current={isActive ? "step" : undefined}
+        className="flex-1 min-w-0 py-1.5 px-2 text-left cursor-pointer rounded-md"
+        onClick={onClick}
+      >
+        <span className="truncate">{title}</span>
+      </button>
       {docLink && (
-        <Link
-          href={docLink}
-          target="_blank"
-          onClick={(e) => e.stopPropagation()}
-          className="ml-auto"
-        >
+        <Link href={docLink} target="_blank" className="ml-auto p-2">
           <ExternalLink className="h-3 w-3 text-muted-foreground hover:text-foreground" />
           <span className="sr-only">Documentation</span>
         </Link>

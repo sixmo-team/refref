@@ -1,7 +1,15 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { schema } from "@/server/db";
-const { participant, referral, refcode, reflink, event, product } = schema;
+const {
+  participant,
+  participantProfileColumns,
+  referral,
+  refcode,
+  reflink,
+  event,
+  product,
+} = schema;
 import { and, count, eq, ilike, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { env } from "@/env";
@@ -71,6 +79,7 @@ export const participantsRouter = createTRPCRouter({
             .filter(Boolean),
         );
       }
+      where = and(eq(participant.productId, ctx.activeProductId), where);
 
       // Map sort field to column using a record
       const sortFieldMap = {
@@ -92,7 +101,7 @@ export const participantsRouter = createTRPCRouter({
       const total = totalResult[0]?.count ?? 0;
       // Get paginated data
       const data = await ctx.db
-        .select()
+        .select(participantProfileColumns)
         .from(participant)
         .where(where)
         .orderBy(sql`${orderByColumn} ${sql.raw(orderByDirection)}`)
@@ -101,15 +110,41 @@ export const participantsRouter = createTRPCRouter({
       return { data, total };
     }),
   getById: protectedProcedure
-    .input(z.object({ id: z.string() }))
+    .input(
+      z
+        .object({
+          id: z.string().min(1),
+          scope: z
+            .object({
+              userId: z.string().min(1),
+              organizationId: z.string().min(1),
+            })
+            .strict(),
+        })
+        .strict(),
+    )
     .query(async ({ ctx, input }) => {
       const { id } = input;
+      if (
+        input.scope.userId !== ctx.userId ||
+        input.scope.organizationId !== ctx.activeOrganizationId
+      )
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Identity scope does not match the current session",
+        });
 
       // Get participant with product validation
       const [participantData] = await ctx.db
-        .select()
+        .select(participantProfileColumns)
         .from(participant)
-        .where(eq(participant.id, id))
+        .innerJoin(product, eq(product.id, participant.productId))
+        .where(
+          and(
+            eq(participant.id, id),
+            eq(product.orgId, ctx.activeOrganizationId),
+          ),
+        )
         .limit(1);
 
       if (!participantData) {

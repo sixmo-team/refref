@@ -8,6 +8,7 @@ import {
   deleteApiKeyForOrganization,
 } from "@refref/coredb";
 import { auth } from "@/lib/auth";
+import { validateProductScope } from "@refref/coredb/security";
 
 export const apiKeysRouter = createTRPCRouter({
   /**
@@ -51,6 +52,13 @@ export const apiKeysRouter = createTRPCRouter({
     .input(
       z.object({
         name: z.string().min(1, "API key name is required"),
+        referralScope: z
+          .object({
+            productId: z.string().min(1),
+            programId: z.string().min(1),
+          })
+          .strict()
+          .optional(),
         expiresIn: z
           .number()
           .int()
@@ -80,6 +88,13 @@ export const apiKeysRouter = createTRPCRouter({
           message: "Only organization admins/owners can manage API keys",
         });
       }
+      if (input.referralScope)
+        await validateProductScope(
+          ctx.db,
+          ctx.activeOrganizationId,
+          input.referralScope.productId,
+          input.referralScope.programId,
+        );
 
       // Ensure service account exists for this organization
       const serviceAccountId = await ensureServiceAccountForOrganization(
@@ -99,11 +114,17 @@ export const apiKeysRouter = createTRPCRouter({
           prefix: "org_refref_key_",
           permissions: {
             [ctx.activeOrganizationId]: ["full_access"],
+            ...(input.referralScope
+              ? { referrals: ["resolve", "purchase"] }
+              : {}),
           },
           metadata: {
             organizationId: ctx.activeOrganizationId,
             createdBy: ctx.userId,
             createdAt: new Date().toISOString(),
+            ...(input.referralScope
+              ? { referralScope: input.referralScope }
+              : {}),
           },
         },
       });
