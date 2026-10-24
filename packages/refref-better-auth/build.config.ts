@@ -13,9 +13,11 @@ export default defineBuildConfig({
   clean: true,
   failOnWarn: false, // Don't fail on warnings
   rollup: {
+    inlineDependencies: ["@refref/types"],
     emitCJS: true,
     esbuild: {
       target: "node16",
+      exclude: [/node_modules/, /\.d\.[cm]?ts$/],
     },
   },
   externals: ["better-auth", "zod"],

@@ -2,12 +2,13 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
 import { getAuth } from "@refref/auth";
 import { schema, type DBType } from "@refref/coredb";
+import { and, eq } from "drizzle-orm";
 
 declare module "fastify" {
   interface FastifyRequest {
     apiKey?: {
       id: string;
-      userId: string;
+      referenceId: string;
       organizationId: string | null;
       permissions: string | null;
       enabled: boolean | null;
@@ -15,6 +16,7 @@ declare module "fastify" {
         organizationId?: string;
         createdBy?: string;
         createdAt?: string;
+        referralScope?: { productId: string; programId: string };
       };
     };
     organization?: {
@@ -44,7 +46,7 @@ const betterAuthPlugin = fp(
     // Create Better Auth instance using shared @refref/auth package
     const auth = getAuth({
       baseURL: process.env.APP_URL || "http://localhost:4000",
-      resendApiKey: process.env.RESEND_API_KEY || "debug_key",
+      resendApiKey: process.env.RESEND_API_KEY || "",
       db: opts.db,
       schema,
       enabledSocialAuth: [],
@@ -76,15 +78,21 @@ const betterAuthPlugin = fp(
               key: apiKeyHeader,
             },
           });
+          if (result?.error?.code === "RATE_LIMITED") {
+            return reply.header("Retry-After", "60").code(429).send({
+              error: "Too Many Requests",
+              message: "API key rate limit exceeded",
+            });
+          }
 
-          if (!result || !(result as any).apiKey) {
+          if (!result?.valid || !result.key) {
             return reply.code(401).send({
               error: "Unauthorized",
               message: "Invalid API key",
             });
           }
 
-          const apiKeyData = (result as any).apiKey;
+          const apiKeyData = result.key;
 
           // Check if the API key is enabled
           if (!apiKeyData.enabled) {
@@ -97,6 +105,17 @@ const betterAuthPlugin = fp(
           // Extract organizationId from API key metadata
           const metadata = apiKeyData.metadata;
           const organizationId = metadata?.organizationId;
+          if (
+            metadata?.referralScope &&
+            !/\/v1\/(?:referrals\/resolve|track\/purchase)\/?$/.test(
+              request.routeOptions.url ?? "",
+            )
+          ) {
+            return reply.code(403).send({
+              error: "Forbidden",
+              message: "Dedicated referral key cannot access this operation",
+            });
+          }
 
           if (!organizationId) {
             return reply.code(500).send({
@@ -113,8 +132,8 @@ const betterAuthPlugin = fp(
 
           if (
             !permissions ||
-            !permissions[organizationId] ||
-            !Array.isArray(permissions[organizationId])
+            !Array.isArray(permissions[organizationId]) ||
+            !permissions[organizationId].includes("full_access")
           ) {
             return reply.code(403).send({
               error: "Forbidden",
@@ -122,6 +141,26 @@ const betterAuthPlugin = fp(
                 "API key does not have permissions for this organization",
             });
           }
+          const [serviceOwner] = await opts.db
+            .select({ id: schema.user.id })
+            .from(schema.user)
+            .innerJoin(
+              schema.orgUser,
+              eq(schema.orgUser.userId, schema.user.id),
+            )
+            .where(
+              and(
+                eq(schema.user.id, apiKeyData.referenceId),
+                eq(schema.user.role, "service"),
+                eq(schema.orgUser.orgId, organizationId),
+              ),
+            )
+            .limit(1);
+          if (!serviceOwner)
+            return reply.code(403).send({
+              error: "Forbidden",
+              message: "API key does not belong to this organization",
+            });
 
           // Fetch organization for authorization context
           const orgData = await opts.db.query.org.findFirst({
@@ -138,20 +177,23 @@ const betterAuthPlugin = fp(
           // Attach API key info and context to request
           request.apiKey = {
             id: apiKeyData.id,
-            userId: apiKeyData.userId,
-            organizationId: apiKeyData.organizationId,
-            permissions: apiKeyData.permissions,
+            referenceId: apiKeyData.referenceId,
+            organizationId,
+            permissions:
+              typeof apiKeyData.permissions === "string"
+                ? apiKeyData.permissions
+                : JSON.stringify(apiKeyData.permissions),
             enabled: apiKeyData.enabled,
             metadata: metadata,
           };
 
           // Attach organization to request for route handlers
-          (request as any).organization = orgData;
+          request.organization = orgData;
         } catch (error) {
           request.log.error({ error }, "API key verification error");
-          return reply.code(401).send({
-            error: "Unauthorized",
-            message: "Invalid API key",
+          return reply.code(503).send({
+            error: "Service Unavailable",
+            message: "API key verification unavailable",
           });
         }
       },

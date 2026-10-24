@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { validateProductScope, SecurityError } from "@refref/coredb/security";
 
 interface GetProgramParams {
   Params: {
@@ -15,7 +16,7 @@ export default async function programsRoutes(fastify: FastifyInstance) {
   fastify.get<GetProgramParams>(
     "/:id",
     {
-      preHandler: [fastify.authenticateApiKey],
+      onRequest: [fastify.authenticateApiKey],
     },
     async (request, reply) => {
       try {
@@ -32,6 +33,12 @@ export default async function programsRoutes(fastify: FastifyInstance) {
             message: "Program not found",
           });
         }
+        await validateProductScope(
+          request.db,
+          request.organization?.id,
+          programRecord.productId,
+          programRecord.id,
+        );
 
         // Return the program data
         return reply.send({
@@ -40,6 +47,12 @@ export default async function programsRoutes(fastify: FastifyInstance) {
         });
       } catch (error) {
         request.log.error({ error }, "Error fetching program");
+        if (error instanceof SecurityError) {
+          return reply.code(404).send({
+            error: "Not Found",
+            message: "Program not found",
+          });
+        }
 
         if (error instanceof z.ZodError) {
           return reply.code(400).send({

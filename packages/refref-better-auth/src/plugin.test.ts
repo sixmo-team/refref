@@ -1,132 +1,101 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// Mock dependencies
-vi.mock("./utils/api-client");
-vi.mock("./utils/cookie");
-
+import { inspect } from "node:util";
+import { betterAuth } from "better-auth";
+import { memoryAdapter } from "better-auth/adapters/memory";
+import { describe, expect, it, vi } from "vitest";
 import { refrefAnalytics } from "./plugin";
-import { RefRefAPIClient } from "./utils/api-client";
-import { extractRefcodeFromContext } from "./utils/cookie";
+import type { SignupTrackingData } from "./types";
 
-describe("refrefAnalytics Plugin", () => {
-  let mockTrackSignup: any;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockTrackSignup = vi.fn().mockResolvedValue({ success: true });
-    vi.mocked(RefRefAPIClient).mockImplementation(
-      () =>
-        ({
-          trackSignup: mockTrackSignup,
-        }) as any,
-    );
-  });
-
-  it("should initialize with valid options", () => {
-    const plugin = refrefAnalytics({
-      apiKey: "test-key",
-      productId: "test-product",
-    });
-
-    expect(plugin.id).toBe("refref-analytics");
-    expect(plugin.hooks.after).toBeDefined();
-  });
-
-  it("should throw error when required options missing", () => {
-    expect(() => refrefAnalytics({} as any)).toThrow("apiKey is required");
-    expect(() => refrefAnalytics({ apiKey: "key" } as any)).toThrow(
-      "productId is required",
-    );
-  });
-
-  it("should track signup with referral code", async () => {
-    vi.mocked(extractRefcodeFromContext).mockReturnValue("REF123");
-
-    const plugin = refrefAnalytics({
-      apiKey: "test-key",
-      productId: "test-product",
-    });
-
-    const handler = plugin.hooks.after[0].handler;
-    await handler({
-      path: "/user/create",
-      body: {
-        user: {
-          id: "user-123",
-          email: "test@example.com",
-        },
-      },
-    } as any);
-
-    expect(mockTrackSignup).toHaveBeenCalledWith(
-      expect.objectContaining({
-        productId: "test-product",
-        payload: expect.objectContaining({
-          userId: "user-123",
-          refcode: "REF123",
+describe("native Better Auth signup attribution", () => {
+  it.each([
+    { disabled: false, trackingFails: false, direct: false },
+    { disabled: true, trackingFails: false, direct: false },
+    { disabled: false, trackingFails: true, direct: false },
+    { disabled: false, trackingFails: false, direct: true },
+  ])(
+    "tracks only user creation without breaking authentication: %o",
+    async ({ disabled, trackingFails, direct }) => {
+      const signups: SignupTrackingData[] = [];
+      const diagnostics: unknown[][] = [];
+      const sensitiveError = "sdk-person+private@example.test";
+      const consoleLog = vi
+        .spyOn(console, "log")
+        .mockImplementation((...args: unknown[]) => {
+          diagnostics.push(args);
+        });
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation((...args: unknown[]) => {
+          diagnostics.push(args);
+        });
+      const baseURL = "http://auth.example.test";
+      const auth = betterAuth({
+        baseURL,
+        secret: "isolated-sdk-regression-secret-at-least-32-characters",
+        database: memoryAdapter({
+          user: [],
+          account: [],
+          session: [],
+          verification: [],
         }),
-      }),
-    );
-  });
+        emailAndPassword: { enabled: true },
+        rateLimit: { enabled: false },
+        telemetry: { enabled: false },
+        logger: { disabled: true },
+        plugins: [
+          refrefAnalytics({
+            apiKey: "regression-only-key",
+            apiUrl: "http://127.0.0.1:4310/tracking",
+            productId: "regression-product",
+            disableSignupTracking: disabled,
+            customSignupTrack: async (data) => {
+              signups.push(data);
+              if (trackingFails) throw new Error(sensitiveError);
+            },
+          }),
+        ],
+      });
+      const headers = {
+        "content-type": "application/json",
+        origin: baseURL,
+        cookie: "refref-refcode=FROM%2FLINK",
+      };
+      const credentials = {
+        name: "Referral regression",
+        email: "signup@example.test",
+        password: "regression-only-Strong42!",
+      };
+      try {
+        const signup = direct
+          ? await auth.api.signUpEmail({
+              headers,
+              body: credentials,
+              asResponse: true,
+            })
+          : await auth.handler(
+              new Request(`${baseURL}/api/auth/sign-up/email`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(credentials),
+              }),
+            );
+        expect(signup.status).toBe(200);
+        expect(signups).toHaveLength(disabled ? 0 : 1);
+        if (!disabled) expect(signups[0]?.refcode).toBe("FROM/LINK");
 
-  it("should track signup without referral code", async () => {
-    vi.mocked(extractRefcodeFromContext).mockReturnValue(undefined);
-
-    const plugin = refrefAnalytics({
-      apiKey: "test-key",
-      productId: "test-product",
-    });
-
-    const handler = plugin.hooks.after[0].handler;
-    await handler({
-      path: "/user/create",
-      body: {
-        user: { id: "user-456" },
-      },
-    } as any);
-
-    expect(mockTrackSignup).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          userId: "user-456",
-          refcode: undefined,
-        }),
-      }),
-    );
-  });
-
-  it("should skip tracking when disabled", async () => {
-    const plugin = refrefAnalytics({
-      apiKey: "test-key",
-      productId: "test-product",
-      disableSignupTracking: true,
-    });
-
-    const handler = plugin.hooks.after[0].handler;
-    await handler({
-      path: "/user/create",
-      body: { user: { id: "user-789" } },
-    } as any);
-
-    expect(mockTrackSignup).not.toHaveBeenCalled();
-  });
-
-  it("should use custom tracking function", async () => {
-    const customTrack = vi.fn();
-
-    const plugin = refrefAnalytics({
-      apiKey: "test-key",
-      productId: "test-product",
-      customSignupTrack: customTrack,
-    });
-
-    const handler = plugin.hooks.after[0].handler;
-    await handler({
-      path: "/user/create",
-      body: { user: { id: "user-custom" } },
-    } as any);
-
-    expect(customTrack).toHaveBeenCalled();
-    expect(mockTrackSignup).not.toHaveBeenCalled();
-  });
+        const signin = await auth.handler(
+          new Request(`${baseURL}/api/auth/sign-in/email`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(credentials),
+          }),
+        );
+        expect(signin.status).toBe(200);
+        expect(signups).toHaveLength(disabled ? 0 : 1);
+        expect(inspect(diagnostics)).not.toContain(sensitiveError);
+      } finally {
+        consoleLog.mockRestore();
+        consoleError.mockRestore();
+      }
+    },
+  );
 });

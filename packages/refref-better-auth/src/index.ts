@@ -14,10 +14,26 @@ export type {
   SignupTrackingData,
   TrackingResponse,
   SignupTrackingPayload,
+  PurchaseTrackingPayload,
+  TrackingEventData,
 } from "./types";
 
 // Utility exports (for advanced usage)
 export { RefRefAPIClient } from "./utils/api-client";
+export type { ReferralApiResult } from "./utils/api-client";
+export {
+  referralCodeResolutionSchema,
+  resolveReferralRequestSchema,
+  referralSnapshotV1Schema,
+  minorPurchaseRequestSchema,
+  minorPurchaseResponseSchema,
+} from "@refref/types";
+export type {
+  ReferralCodeResolution,
+  ReferralSnapshotV1,
+  MinorPurchaseRequest,
+  MinorPurchaseResponse,
+} from "@refref/types";
 export {
   extractRefcodeFromRequest,
   extractRefcodeFromContext,

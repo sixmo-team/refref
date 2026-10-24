@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { buildApp } from "./app.js";
+import { safeError } from "@refref/utils";
 
 const start = async () => {
   try {
@@ -22,7 +23,7 @@ const start = async () => {
       });
     }
   } catch (err) {
-    console.error(err);
+    console.error("API startup failed", safeError(err));
     process.exit(1);
   }
 };

@@ -10,9 +10,9 @@ export interface RefRefPluginOptions {
   apiKey: string;
 
   /**
-   * RefRef API URL (defaults to production API)
+   * Explicit URL of the operator's RefRef API; no third-party default.
    */
-  apiUrl?: string;
+  apiUrl: string;
 
   /**
    * RefRef product ID
@@ -25,7 +25,7 @@ export interface RefRefPluginOptions {
   programId?: string;
 
   /**
-   * Name of the cookie containing the referral code (default: "refref_refcode")
+   * Name of the cookie containing the referral code (default: "refref-refcode")
    */
   cookieName?: string;
 
@@ -53,17 +53,34 @@ export interface SignupTrackingData {
   programId?: string;
 }
 
+export interface PurchaseTrackingPayload {
+  timestamp: string;
+  productId: string;
+  programId?: string;
+  payload: {
+    userId: string;
+    orderAmount: number;
+    orderId: string;
+    productIds?: string[];
+    currency?: string;
+  };
+}
+
+export const trackingEventResponseSchema = z.object({
+  eventId: z.string().min(1),
+  referralId: z.string().optional(),
+  participantId: z.string().optional(),
+});
+
+export type TrackingEventData = z.infer<typeof trackingEventResponseSchema>;
+
 /**
  * RefRef API response for tracking events
  */
 export interface TrackingResponse {
   success: boolean;
   message?: string;
-  data?: {
-    eventId?: string;
-    referralId?: string;
-    participantId?: string;
-  };
+  data?: TrackingEventData;
 }
 
 /**

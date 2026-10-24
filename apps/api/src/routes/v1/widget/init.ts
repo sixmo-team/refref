@@ -10,6 +10,7 @@ import {
 import { createEvent } from "../../../services/events.js";
 import { generateGlobalCode, normalizeCode } from "@refref/utils";
 
+import { validateEventScope, SecurityError } from "@refref/coredb/security";
 export default async function widgetInitRoutes(fastify: FastifyInstance) {
   /**
    * POST /v1/widget/init
@@ -55,6 +56,30 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
             message: "No active program found for this product",
           });
         }
+        const referrerCode = refcodeParam
+          ? await request.db.query.refcode.findFirst({
+              where: (code, { eq, and }) =>
+                and(
+                  eq(code.code, normalizeCode(refcodeParam)),
+                  eq(code.isActive, true),
+                  eq(code.productId, productId),
+                  eq(code.programId, activeProgram.id),
+                ),
+            })
+          : undefined;
+        if (refcodeParam && !referrerCode) {
+          return reply.code(403).send({
+            error: "Forbidden",
+            message: "Referral code does not match the product and program",
+          });
+        }
+        if (referrerCode) {
+          await validateEventScope(request.db, {
+            productId,
+            programId: activeProgram.id,
+            participantId: referrerCode.participantId,
+          });
+        }
 
         // Check if participant already exists
         const existingParticipant =
@@ -93,20 +118,13 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
 
         // Auto-attribution: Create referral if refcode provided and participant is new
         let referralRecordId: string | null = null;
-        if (refcodeParam && !existingParticipant) {
+        if (
+          refcodeParam &&
+          !existingParticipant &&
+          !activeProgram.config?.serverTracking &&
+          !activeProgram.config?.rewardConfig?.firstPaidOnly
+        ) {
           try {
-            const normalizedRefcode = normalizeCode(refcodeParam);
-
-            // Find the refcode within this product only (enforce product boundary)
-            // Note: global flag only means the code uses 7-char format, not that it works across products
-            const referrerCode = await request.db.query.refcode.findFirst({
-              where: (refcode, { eq, and }) =>
-                and(
-                  eq(refcode.code, normalizedRefcode),
-                  eq(refcode.productId, productId),
-                ),
-            });
-
             if (referrerCode) {
               // Create referral record linking the new participant (referee) to the referrer
               const referralId = createId("referral");
@@ -115,6 +133,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
                 .values({
                   id: referralId,
                   referrerId: referrerCode.participantId,
+                  programId: activeProgram.id,
                   externalId: request.user.sub,
                   email: request.user.email,
                   name: request.user.name,
@@ -124,15 +143,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
 
               if (newReferral) {
                 referralRecordId = newReferral.id;
-                request.log.info(
-                  {
-                    refcode: normalizedRefcode,
-                    referrerId: referrerCode.participantId,
-                    refereeId: request.user.sub,
-                    referralId: referralRecordId,
-                  },
-                  "Auto-attribution successful",
-                );
+                request.log.info("Auto-attribution successful");
 
                 // Create signup event for reward processing
                 try {
@@ -160,10 +171,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
                 }
               }
             } else {
-              request.log.warn(
-                { refcode: normalizedRefcode },
-                "Referral code not found",
-              );
+              request.log.warn("Referral code not found");
             }
           } catch (error) {
             // Log but don't fail widget init on attribution errors
@@ -215,11 +223,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
               if (!refcodeRecord) {
                 insertRetries--;
                 request.log.warn(
-                  {
-                    participantId: participantRecord.id,
-                    code: currentCode,
-                  },
-                  "Refcode collision on insert, retrying with new code...",
+                  "Refcode collision on insert, retrying with new code",
                 );
 
                 // Generate a new code for next retry
@@ -276,6 +280,11 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
 
         return reply.send(response);
       } catch (error) {
+        if (error instanceof SecurityError) {
+          return reply
+            .code(error.statusCode)
+            .send({ error: "Forbidden", message: error.message });
+        }
         request.log.error({ error }, "Error in widget init");
 
         if (error instanceof z.ZodError) {
