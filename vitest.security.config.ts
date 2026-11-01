@@ -19,9 +19,14 @@ export default {
     include: [
       "apps/webapp/src/server/api/security.integration.test.ts",
       "apps/webapp/src/server/api/referral-first-payment.integration.test.ts",
+      "apps/webapp/src/server/api/partner-self-service.integration.test.ts",
+      "apps/webapp/src/components/partner-program-terms.test.tsx",
+      "apps/webapp/src/lib/__tests__/auth-native.integration.test.ts",
+      "apps/webapp/src/lib/__tests__/auth-return.test.ts",
       "apps/webapp/src/lib/__tests__/referral-first-payment.test.ts",
       "apps/webapp/src/lib/__tests__/auth-email-privacy.test.ts",
       "apps/webapp/src/lib/__tests__/onboarding-validation.test.ts",
+      "apps/webapp/src/trpc/react.test.tsx",
       "apps/refer/test/referral-redirect.test.ts",
     ],
   },
@@ -35,6 +40,10 @@ export default {
       {
         find: /^@refref\/coredb\/schema$/,
         replacement: source("./packages/coredb/src/schema.ts"),
+      },
+      {
+        find: /^@refref\/auth\/return$/,
+        replacement: source("./packages/auth/src/return.ts"),
       },
       ...["coredb", "types", "id", "utils", "auth", "email-templates"].map(
         (name) => ({

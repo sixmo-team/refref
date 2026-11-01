@@ -46,6 +46,7 @@ test(
     const ready = join(directory, "ready");
     const controller = new AbortController();
     let groupPid;
+    const failures = [];
     try {
       const grandchild = `require('node:fs').writeFileSync(process.argv[1], JSON.stringify({pid: process.pid, groupPid: Number(process.argv[2])})); setTimeout(() => {}, 5000);`;
       const child = `require('node:child_process').spawn(process.execPath, ['--max-old-space-size=32', '-e', ${JSON.stringify(grandchild)}, process.argv[1], String(process.pid)], {stdio: 'ignore'}); setTimeout(() => {}, 5000);`;
@@ -88,16 +89,26 @@ test(
         state === "gone" || state === "Z",
         `descendant still running (${state})`,
       );
+    } catch (error) {
+      failures.push(error);
     } finally {
       controller.abort();
       if (groupPid) {
         try {
           process.kill(-groupPid, "SIGKILL");
         } catch (error) {
-          if (error.code !== "ESRCH") throw error;
+          if (error.code !== "ESRCH") failures.push(error);
         }
       }
-      rmSync(directory, { recursive: true, force: true });
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Command assertion and cleanup failed");
     }
   },
 );
