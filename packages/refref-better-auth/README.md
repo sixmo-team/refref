@@ -4,6 +4,27 @@ Server-side signup attribution for Better Auth. This checkout contains local har
 
 Verified with Better Auth 1.7.11 and Node.js 24. See the [root deployment instructions](../../README.md) for the isolated development stack and bounded build/test commands.
 
+## Strict TypeScript consumers
+
+Better Auth's public plugin type references both Node and Bun SQLite adapters, even when the application uses another database. Install genuine declarations, not local `declare module` substitutes:
+
+```bash
+npm install --save-dev @types/node@24.19.2 bun-types@1.3.14
+```
+
+Select only the required Bun SQLite declaration alongside the Node declarations:
+
+```json
+{
+  "compilerOptions": {
+    "types": ["node", "bun-types/sqlite"],
+    "skipLibCheck": false
+  }
+}
+```
+
+Node 22 consumers use `@types/node@22.20.5` instead. This loads the upstream SQLite module declaration, not unrelated Bun global overrides or a Bun runtime. JavaScript consumers do not need these optional type peers. The bundler's `node16` syntax target is not a promise of Node 16/20 runtime support.
+
 ## Configuration
 
 Add this plugin to your existing Better Auth plugin list; keep the existing database, providers and other authentication options:

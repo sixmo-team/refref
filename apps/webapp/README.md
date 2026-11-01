@@ -106,40 +106,19 @@ export default function YourComponent() {
 
 ## Refcode Concept
 
-### Global vs Local Codes
+### Referral codes and vanity links are separate records
 
-RefRef now supports two types of referral codes:
+- `refcode.code` is globally unique, belongs to a product/programme/participant, and accepts **3–32 ASCII letters or digits**. Input is trimmed and stored in lowercase; `health` is reserved and the existing profanity check remains.
+- `generateRefcode()` proposes a seven-character code; seven is not a validation requirement. Partners can replace that suggestion before joining and explicitly create additional meaningful codes such as `anna10` or `annatelegram`.
+- Availability is checked while typing and again transactionally on save. Another owner's collision is explicit; the server never substitutes a random value for the chosen text. Retrying the same owned code reuses that record, including its current activity state.
+- The own participant portal lists every owned code with its activity and per-code confirmed purchase/commission results. Disabling a code blocks new resolution but does not rewrite accepted purchases, rewards or rules.
+- `reflink` is an existing product-scoped vanity slug pointing to a `refcodeId`, not a second kind of promotional code. Existing direct `REFERRAL_HOST_URL/:code` and vanity `REFERRAL_HOST_URL/:product_slug/:slug` redirects retain their separate validation and behaviour.
+- The AI mobile integration uses **manual code entry on tariffs only**. Partner entry `/participant-portal/join/[programId]` is an authentication/enrolment destination, not a buyer attribution link. This feature adds no referral deep links, click tracking or install attribution.
 
-#### 1. Global Codes
+### Partner self-service
 
-- **Format**: 7 characters (numbers + lowercase letters: `23456789abcdefghjkmnpqrstuvwxyz`)
-- **Example**: `abc1234`
-- **URL Pattern**: `REFERRAL_HOST_URL/:code`
-  - Example: `https://refer.refref.app/abc1234`
-- **Uniqueness**: Globally unique across the entire RefRef system
-- **Generation**: Auto-generated with profanity filtering
-- **Use Case**: Default referral codes for all participants
+A verified RefRef person can join an explicitly enabled active programme without an AI account or organization membership. The join form shows the immutable published financial/legal terms, an editable first-code suggestion and an unchecked required acceptance checkbox. Existing protected organization/product administration remains separate from `/participant-portal`.
 
-#### 2. Local Codes
-
-- **Format**: User-specified vanity strings (3-50 characters, alphanumeric + hyphens)
-- **Example**: `john-doe`, `ceo`, `founder`
-- **URL Pattern**: `REFERRAL_HOST_URL/:product_slug/:code`
-  - Example: `https://refer.refref.app/acme/john-doe`
-- **Uniqueness**: Unique within a specific product
-- **Generation**: User-provided (validated for length, characters, and profanity)
-- **Use Case**: Custom vanity URLs for branding and memorability
-
-### Key Characteristics
-
-Both code types share these properties:
-
-- **Case-insensitive**: Stored and compared in lowercase
-- **Program Association**: Every refcode belongs to a specific program and participant
-- **Product Association**: Every refcode is associated with a product
-- **Profanity Filtered**: All codes are checked against a profanity filter
-- **Attribution-ready**: Can be used in cookies, URL params, and form fields as `refcode`
-- **Multiple Codes**: A participant can have multiple refcodes for a program (e.g., both global and local codes)
-  - When fetching for display/widget, always use the **most recent** one (ORDER BY created_at DESC)
+Administrators publish a reviewed rules version and explicitly enable admission in the programme's **Партнёры** step. Publication freezes the actual effective commission rules, buyer discount and programme period; changes require a new version and explicit acceptance. Closing admission prevents new partners but preserves existing participants' code/history management. Recipient details are supplied only when requesting a withdrawal; they are user-provided, not bank-verified.
 
 ---

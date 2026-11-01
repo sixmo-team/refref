@@ -93,12 +93,12 @@ The `refcode` entity has two distinct identifiers:
 - **`id` field**: Database primary key (e.g., `rc_cmfo3p7q000000s0t3n5o6p7q`)
   - Generated using `createId("refcode")`
   - Used for internal database relationships and operations
-  - Never exposed to end users
+  - May appear in scoped API responses; knowing an ID never grants access
 
-- **`code` field**: User-facing referral code (e.g., `abc1234` or `john-doe`)
-  - Generated using `@refref/utils` functions (`generateGlobalCode()` or validated via `validateVanityCode()`)
-  - Visible in referral URLs: `REFERRAL_HOST_URL/:code`
-  - Unique per scope (global or product-level)
+- **`code` field**: User-facing referral code (e.g., `anna10` or `annatelegram`)
+  - 3–32 ASCII letters or digits, stored in lowercase; `health` is reserved
+  - Suggested using `generateRefcode()`, or validated using `validateRefcode()` from `@refref/utils`
+  - Unique globally. Existing generic referral URLs use `REFERRAL_HOST_URL/:code`; the AI mobile integration uses manual entry instead
 
 This separation allows for user-friendly, short referral codes while maintaining robust database integrity with collision-resistant CUIDs.
 
