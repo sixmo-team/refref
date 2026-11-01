@@ -11,9 +11,27 @@ syncInjectedDepsAfterScripts:
 overrides:
   "better-auth>drizzle-kit": "-"
   "better-auth>vitest": "-"
+  # The SDK uses unbuild's Rollup builder only; no Vue file/CLI entry exists.
+  "mkdist@2.4.1>vue-tsc": "-"
+  # Better Auth's public SQLite union needs one genuine Node type environment.
+  "bun-types@1.3.14>@types/node": "24.19.2"
+  # This unused UI dependency otherwise overrides api-key's native Better Call1 peer.
+  "@daveyplate/better-auth-ui@3.4.0>better-call": "-"
   "happy-dom": "^20.8.9"
   "@esbuild-kit/core-utils>esbuild": "^0.25.12"
   "minimatch@3": "^3.1.4"
   "ajv@6": "^6.14.0"
   "lodash": "^4.18.0"
   "webpack@5": "^5.112.0"
+  # Native URI parsing fixes (GHSA-w74x-v6f9-j3xg and related normalization advisories).
+  "fast-uri@3": "3.1.9"
+  "fast-uri@4": "4.2.3"
+  "undici@>=7.0.0 <7.30.1": "7.30.1"
+  # Official dev-server fs.deny bypass fix; keep the existing Vite major.
+  "vite@6.4.4": "6.4.5"
+  # Renderer 2.2 uses html-to-text 10/deepmerge-ts instead of vulnerable deepmerge 4.
+  "@react-email/render@>=2.0.0 <2.2.0": "2.2.0"
+  # The email CLI uses glob.sync; glob 14 stops traversal after AbortSignal cancellation.
+  "react-email>glob": "14.0.2"
+  # Estree uses the retained named matcher API, unlike legacy callable minimatch 3.
+  "@typescript-eslint/typescript-estree>minimatch": "11.0.1"

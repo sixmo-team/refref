@@ -24,6 +24,7 @@
     "build:widget": "vite build --out-dir dist/widget --mode development",
     "build:widget:production": "vite build --out-dir dist/widget --mode production",
     "lint": "eslint . --report-unused-disable-directives",
+    "test": "vitest run --maxWorkers=1",
     "preview": "vite preview",
     "type:check": "tsc --noEmit"
   },
@@ -44,9 +45,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.4",
     "vite-plugin-css-injected-by-js": "^3.5.2",
+    "vitest": "^4.1.12",
     "vite-plugin-dts": "^5.1.2"
   }
 }

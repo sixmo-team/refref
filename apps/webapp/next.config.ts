@@ -9,6 +9,7 @@ import "@/env";
 const config: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
+  serverExternalPackages: ["@aws-sdk/client-sesv2"],
   experimental: {
     cpus: 1,
     workerThreads: false,

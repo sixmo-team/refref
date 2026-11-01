@@ -6,7 +6,7 @@
     "dev": "turbo run dev --concurrency=20",
     "portless:list": "portless list",
     "portless:proxy": "portless proxy start",
-    "lint": "turbo run lint --concurrency=1",
+    "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "type:check": "turbo run type:check --concurrency=1",
     "test": "turbo run test --concurrency=1",
@@ -14,6 +14,8 @@
     "dev:local": "node scripts/dev.mjs"
   },
   "devDependencies": {
+    "@refref/eslint-config": "workspace:*",
+    "eslint": "^9.39.5",
     "prettier": "^3.9.10",
     "turbo": "^2.11.9",
     "typescript": "5.7.3"

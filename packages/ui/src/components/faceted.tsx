@@ -228,6 +228,7 @@ interface FacetedItemProps extends React.ComponentProps<typeof CommandItem> {
 function FacetedItem(props: FacetedItemProps) {
   const { value, onSelect, className, children, ...itemProps } = props;
   const context = useFacetedContext("FacetedItem");
+  const { onItemSelect: onContextItemSelect } = context;
 
   const isSelected = context.multiple
     ? Array.isArray(context.value) && context.value.includes(value)
@@ -237,11 +238,11 @@ function FacetedItem(props: FacetedItemProps) {
     (currentValue: string) => {
       if (onSelect) {
         onSelect(currentValue);
-      } else if (context.onItemSelect) {
-        context.onItemSelect(currentValue);
+      } else if (onContextItemSelect) {
+        onContextItemSelect(currentValue);
       }
     },
-    [onSelect, context.onItemSelect],
+    [onSelect, onContextItemSelect],
   );
 
   return (

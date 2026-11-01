@@ -1,6 +1,8 @@
 {
   "extends": "@refref/typescript-config/react-library.json",
   "compilerOptions": {
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "baseUrl": ".",
     "paths": {
       "@refref/ui/*": ["./src/*"]

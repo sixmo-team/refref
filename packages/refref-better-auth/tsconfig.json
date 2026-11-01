@@ -1,6 +1,7 @@
 {
   "extends": "@refref/typescript-config/base.json",
   "compilerOptions": {
+    "types": ["node", "bun-types/sqlite"],
     "outDir": "dist",
     "rootDir": "src"
   },

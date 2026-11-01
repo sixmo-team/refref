@@ -19,6 +19,16 @@
         "types": "./dist/cjs/index.d.cts",
         "default": "./dist/cjs/index.cjs"
       }
+    },
+    "./return": {
+      "import": {
+        "types": "./dist/es/return.d.ts",
+        "default": "./dist/es/return.js"
+      },
+      "require": {
+        "types": "./dist/cjs/return.d.cts",
+        "default": "./dist/cjs/return.cjs"
+      }
     }
   },
   "scripts": {
@@ -36,11 +46,11 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "3.1109.0",
     "@better-auth/api-key": "1.7.11",
     "@refref/coredb": "workspace:*",
     "@refref/email-templates": "workspace:*",
     "better-auth": "1.7.11",
-    "drizzle-orm": "0.45.4",
-    "resend": "^4.8.0"
+    "drizzle-orm": "0.45.4"
   }
 }

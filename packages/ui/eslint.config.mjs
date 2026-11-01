@@ -65,4 +65,14 @@ export default [
       // - src/components/faceted.tsx (custom component)
     ],
   },
+  {
+    files: ["src/types/data-table.ts"],
+    // TanStack requires these exact merger parameters; tsc checks unused code.
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { varsIgnorePattern: "^(TData|TValue)$" },
+      ],
+    },
+  },
 ];

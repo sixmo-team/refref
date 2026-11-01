@@ -9,21 +9,28 @@
     "NEXT_TELEMETRY_DISABLED",
     "TURBO_TELEMETRY_DISABLED",
     "PAYOUT_MANUAL_EXECUTION_NAMESPACE",
+    "REFREF_POSTBOX_FROM",
+    "REFREF_POSTBOX_ACCESS_KEY_ID",
+    "REFREF_POSTBOX_SECRET_ACCESS_KEY",
+    "REFREF_POSTBOX_SESSION_TOKEN",
+    "AWS_*",
     "DO_NOT_TRACK"
   ],
   "globalEnv": [
     "BETTER_AUTH_SECRET",
     "DATABASE_URL",
     "NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_REFER_URL",
     "BETTER_AUTH_URL",
     "NODE_ENV",
-    "RESEND_API_KEY",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
     "REFERRAL_PROGRAM_CLIENT_ID",
     "REFERRAL_PROGRAM_CLIENT_SECRET",
     "NEXT_PUBLIC_REFREF_PRODUCT_ID",
     "NEXT_PUBLIC_REFREF_PROGRAM_ID",
+    "DISABLE_SIGN_UP",
+    "SKIP_ENV_VALIDATION",
     "VITE_REFREF_API_ENDPOINT"
   ],
   "tasks": {
@@ -36,18 +43,81 @@
     "lint": {
       "dependsOn": ["^lint"]
     },
+    "test:browser": {
+      "cache": false,
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["PLAYWRIGHT_WS_ENDPOINT"]
+    },
+    "@refref/e2e#test": {
+      "cache": false,
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "TEST_DDL_DATABASE_URL",
+        "TEST_NGINX_IMAGE",
+        "REFREF_DEV_EMAIL",
+        "REFREF_DEV_PASSWORD",
+        "TEST_ENV",
+        "TEST_PREFIX",
+        "CLEANUP_ON_FAILURE",
+        "VIDEO_ON_FAILURE",
+        "DRY_RUN",
+        "PRODUCTION_SAFE_MODE",
+        "SKIP_WEBSERVER_START",
+        "WEBAPP_URL",
+        "API_URL",
+        "REFER_URL",
+        "ACME_URL",
+        "ASSETS_URL",
+        "TEST_USER_EMAIL",
+        "TEST_USER_PASSWORD",
+        "TEST_ORGANIZATION_NAME",
+        "TEST_PRODUCT_NAME",
+        "TEST_PROGRAM_NAME",
+        "REFERRER_NAME",
+        "REFERRER_EMAIL",
+        "REFEREE_NAME",
+        "REFEREE_EMAIL"
+      ]
+    },
     "type:check": {
       "dependsOn": ["^build", "^type:check"]
     },
     "test": {
+      "cache": false,
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "TEST_DDL_DATABASE_URL",
+        "TEST_NGINX_IMAGE",
+        "REFREF_DEV_EMAIL",
+        "REFREF_DEV_PASSWORD"
+      ],
       "dependsOn": ["^build"]
     },
     "test:run": {
+      "cache": false,
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "TEST_DDL_DATABASE_URL",
+        "TEST_NGINX_IMAGE",
+        "REFREF_DEV_EMAIL",
+        "REFREF_DEV_PASSWORD"
+      ],
       "dependsOn": ["^build"]
     },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,
+      "passThroughEnv": [
+        "LOG_LEVEL",
+        "PORT",
+        "HOST",
+        "APP_URL",
+        "REFERRAL_HOST_URL",
+        "VERCEL_URL",
+        "REFREF_CLIENT_ID",
+        "REFREF_CLIENT_SECRET",
+        "HOME"
+      ],
       "persistent": true
     },
     "db:generate": {},
