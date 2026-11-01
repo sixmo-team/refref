@@ -1,5 +1,9 @@
 "use client";
 import { useRef, useState } from "react";
+import Link from "next/link";
+import { useQueryState } from "nuqs";
+import { PartnerCodesPanel } from "@/components/partner-codes-panel";
+import { Textarea } from "@refref/ui/components/textarea";
 import { api } from "@/trpc/react";
 import { getQueryKey } from "@trpc/react-query";
 import { useSession } from "@/lib/auth-client";
@@ -10,6 +14,8 @@ import { Skeleton } from "@refref/ui/components/skeleton";
 import {
   currencySchema,
   RewardCurrencies,
+  payoutRecipientInputSchema,
+  type PayoutRecipientInput,
   type CurrencyType,
 } from "@refref/types";
 
@@ -21,7 +27,9 @@ export default function ParticipantPortalPage() {
     { userId },
     { enabled: !!userId },
   );
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useQueryState("productId", {
+    defaultValue: "",
+  });
   const utils = api.useUtils();
   const membershipDeniedNow =
     memberships.error?.data?.code === "UNAUTHORIZED" ||
@@ -48,24 +56,37 @@ export default function ParticipantPortalPage() {
       });
     },
   });
+  const candidate =
+    selected ||
+    (memberships.data?.length === 1 ? memberships.data[0]!.productId : "");
   const productId =
-    !membershipDenied && memberships.data?.some((m) => m.productId === selected)
-      ? selected
+    !membershipDenied &&
+    memberships.data?.some((m) => m.productId === candidate)
+      ? candidate
       : "";
   return (
     <main className="max-w-5xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-semibold">My referral earnings</h1>
       <p>
-        Only independently verified participant ownership grants access.
-        Organization membership and widget tokens are not payout authorization.
+        Собственный подтверждённый аккаунт RefRef даёт доступ только к вашим
+        кодам, начислениям и заявкам. Реквизиты требуются при выводе, не при
+        подключении.
       </p>
+      {userId && (
+        <details>
+          <summary>Идентификатор аккаунта RefRef</summary>
+          <code>{userId}</code>
+        </details>
+      )}
       {session.isPending ? (
         <Skeleton className="h-24 w-full" />
       ) : !userId ? (
         <div role="alert">
           Session identity could not be verified.{" "}
           <Button onClick={() => void session.refetch()}>Retry session</Button>
-          <a href="/auth/sign-in">Sign in</a>
+          <Link href="/auth/sign-in" prefetch={false}>
+            Sign in
+          </Link>
         </div>
       ) : null}
       {userId &&
@@ -87,7 +108,7 @@ export default function ParticipantPortalPage() {
             <select
               className="border rounded p-2"
               value={productId}
-              onChange={(e) => setSelected(e.target.value)}
+              onChange={(e) => void setSelected(e.target.value)}
             >
               <option value="">Select verified product</option>
               {memberships.data?.map((m) => (
@@ -104,8 +125,9 @@ export default function ParticipantPortalPage() {
         !membershipDenied &&
         !memberships.data?.length && (
           <p>
-            No verified participant ownership is linked to this account. Contact
-            the program administrator for identity and recipient verification.
+            Вы ещё не подключились к программе. Откройте служебный адрес
+            участия, войдите в RefRef и примите её действующие правила.
+            Реквизиты пока не нужны.
           </p>
         )}
       {productId && userId && (
@@ -135,10 +157,15 @@ function OwnedFinancialView({
   });
   const [currency, setCurrency] = useState<CurrencyType>("RUB");
   const [amount, setAmount] = useState("");
+  const [recipient, setRecipient] = useState<PayoutRecipientInput>({
+    name: "",
+    details: "",
+  });
   const request = useRef<{
     key: string;
     amountMinor: number;
     currency: CurrencyType;
+    recipient: PayoutRecipientInput;
   } | null>(null);
   const busy = useRef(false);
   const utils = api.useUtils();
@@ -203,14 +230,28 @@ function OwnedFinancialView({
       setError("Enter a positive integer minor amount");
       return;
     }
+    const parsedRecipient = payoutRecipientInputSchema.safeParse(recipient);
+    if (!parsedRecipient.success) {
+      setError(
+        "Укажите имя получателя и реквизиты: до 200 и 1000 символов соответственно.",
+      );
+      return;
+    }
     busy.current = true;
     setError(null);
     if (
       !request.current ||
       request.current.amountMinor !== amountMinor ||
-      request.current.currency !== currency
+      request.current.currency !== currency ||
+      request.current.recipient.name !== parsedRecipient.data.name ||
+      request.current.recipient.details !== parsedRecipient.data.details
     )
-      request.current = { key: crypto.randomUUID(), amountMinor, currency };
+      request.current = {
+        key: crypto.randomUUID(),
+        amountMinor,
+        currency,
+        recipient: parsedRecipient.data,
+      };
     try {
       await payout.mutateAsync({
         userId,
@@ -218,6 +259,7 @@ function OwnedFinancialView({
         amountMinor,
         currency,
         idempotencyKey: request.current.key,
+        recipient: parsedRecipient.data,
       });
       request.current = null;
       setAmount("");
@@ -250,7 +292,9 @@ function OwnedFinancialView({
         >
           Retry verified access
         </Button>
-        <a href="/auth/sign-in">Sign in</a>
+        <Link href="/auth/sign-in" prefetch={false}>
+          Sign in
+        </Link>
       </div>
     );
   return (
@@ -264,43 +308,59 @@ function OwnedFinancialView({
               Balance refresh failed. No financial success is assumed.
             </p>
           )}
-          <table className="w-full text-left">
-            <caption>
-              Approved cash balance (pending, rejected, discount and legacy
-              disbursed earnings are not withdrawable)
-            </caption>
-            <thead>
-              <tr>
-                <th>Currency</th>
-                <th>Eligible</th>
-                <th>Reserved</th>
-                <th>Completed</th>
-                <th>Available</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.data?.balances.map((b) => (
-                <tr key={b.currency}>
-                  {[
-                    b.currency,
-                    b.eligibleMinor,
-                    b.reservedMinor,
-                    b.completedMinor,
-                    b.availableMinor,
-                  ].map((v, i) => (
-                    <td key={i}>
-                      {i === 0
-                        ? v
-                        : new Intl.NumberFormat(undefined, {
-                            style: "currency",
-                            currency: b.currency,
-                          }).format(Number(v) / 100)}
-                    </td>
-                  ))}
+          {summary.data && (
+            <PartnerCodesPanel
+              key={`${userId}:${productId}`}
+              userId={userId}
+              productId={productId}
+              codes={summary.data.codes}
+              acceptedRules={summary.data.acceptedRules}
+            />
+          )}
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Одобренный баланс"
+            tabIndex={0}
+          >
+            <table className="w-full text-left">
+              <caption>
+                Approved cash balance (pending, rejected, discount and legacy
+                disbursed earnings are not withdrawable)
+              </caption>
+              <thead>
+                <tr>
+                  <th>Currency</th>
+                  <th>Eligible</th>
+                  <th>Reserved</th>
+                  <th>Completed</th>
+                  <th>Available</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {summary.data?.balances.map((b) => (
+                  <tr key={b.currency}>
+                    {[
+                      b.currency,
+                      b.eligibleMinor,
+                      b.reservedMinor,
+                      b.completedMinor,
+                      b.availableMinor,
+                    ].map((v, i) => (
+                      <td key={i}>
+                        {i === 0
+                          ? v
+                          : new Intl.NumberFormat(undefined, {
+                              style: "currency",
+                              currency: b.currency,
+                            }).format(Number(v) / 100)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <details>
             <summary>All reward categories</summary>
             {summary.data?.categories.map((c, i) => (
@@ -311,8 +371,8 @@ function OwnedFinancialView({
             ))}
           </details>
           <p>
-            Verified recipient: {summary.data?.recipient?.name}. Details are
-            frozen when requesting a payout.
+            Реквизиты указываются и подтверждаются вами для конкретной заявки.
+            После создания заявки её получатель и сумма не изменяются.
           </p>
         </>
       )}
@@ -328,6 +388,7 @@ function OwnedFinancialView({
           <select
             className="block border rounded p-2"
             value={currency}
+            disabled={payout.isPending}
             onChange={(e) => setCurrency(currencySchema.parse(e.target.value))}
           >
             {RewardCurrencies.map((c) => (
@@ -341,10 +402,64 @@ function OwnedFinancialView({
             type="number"
             min="1"
             step="1"
+            disabled={payout.isPending}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
         </label>
+        <label>
+          Получатель
+          <Input
+            required
+            autoComplete="name"
+            maxLength={200}
+            disabled={payout.isPending}
+            value={recipient.name}
+            onChange={(event) =>
+              setRecipient((current) => ({
+                ...current,
+                name: event.target.value,
+              }))
+            }
+          />
+        </label>
+        <label className="min-w-64 flex-1">
+          Реквизиты для ручного перевода
+          <Textarea
+            required
+            maxLength={1000}
+            rows={3}
+            disabled={payout.isPending}
+            value={recipient.details}
+            autoComplete="off"
+            onChange={(event) =>
+              setRecipient((current) => ({
+                ...current,
+                details: event.target.value,
+              }))
+            }
+          />
+        </label>
+        {summary.data?.recipient && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={payout.isPending}
+            onClick={() =>
+              setRecipient({
+                name: summary.data!.recipient!.name,
+                details: summary.data!.recipient!.details,
+              })
+            }
+          >
+            Использовать сохранённые реквизиты
+          </Button>
+        )}
+        <p className="w-full text-sm text-muted-foreground">
+          Проверьте реквизиты перед отправкой. Не указывайте PIN, CVV, пароли
+          или коды подтверждения. Это данные, предоставленные вами, не
+          банковская верификация. Перевод выполняется администратором вручную.
+        </p>
         <Button type="submit" disabled={payout.isPending || !summary.data}>
           Request payout
         </Button>
@@ -360,58 +475,78 @@ function OwnedFinancialView({
         <>
           {history.isError && <p role="alert">History refresh failed.</p>}
           <h2 className="text-xl">Rewards</h2>
-          <table className="w-full text-left">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Event</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.data?.rewards.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.createdAt.toLocaleString()}</td>
-                  <td>{r.rewardType}</td>
-                  <td>
-                    {r.amount} {r.currency}
-                  </td>
-                  <td>{r.status}</td>
-                  <td>{r.eventId}</td>
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="История начислений"
+            tabIndex={0}
+          >
+            <table className="w-full text-left">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Event</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.data?.rewards.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.createdAt.toLocaleString()}</td>
+                    <td>{r.rewardType}</td>
+                    <td>
+                      {r.amount} {r.currency}
+                    </td>
+                    <td>{r.status}</td>
+                    <td>{r.eventId}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <h2 className="text-xl">Payout requests</h2>
-          <table className="w-full text-left">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Execution</th>
-                <th>Reference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.data?.payouts.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.id}</td>
-                  <td>
-                    {new Intl.NumberFormat(undefined, {
-                      style: "currency",
-                      currency: p.currency,
-                    }).format(p.amountMinor / 100)}
-                  </td>
-                  <td>{p.status}</td>
-                  <td>{p.executionMethod ?? "not started"}</td>
-                  <td>{p.externalReference ?? "not confirmed"}</td>
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Заявки на вывод"
+            tabIndex={0}
+          >
+            <table className="w-full text-left">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Execution</th>
+                  <th>Recipient</th>
+                  <th>Reference</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.data?.payouts.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.id}</td>
+                    <td>
+                      {new Intl.NumberFormat(undefined, {
+                        style: "currency",
+                        currency: p.currency,
+                      }).format(p.amountMinor / 100)}
+                    </td>
+                    <td>{p.status}</td>
+                    <td>{p.executionMethod ?? "not started"}</td>
+                    <td className="max-w-xs break-words">
+                      {p.recipient.name}
+                      <br />
+                      {p.recipient.details}
+                    </td>
+                    <td>{p.externalReference ?? "not confirmed"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="flex gap-3">
             <Button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
               Previous

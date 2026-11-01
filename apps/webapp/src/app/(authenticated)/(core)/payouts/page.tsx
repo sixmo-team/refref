@@ -10,7 +10,7 @@ import { useDeniedRead } from "@/hooks/use-denied-read";
 
 export default function PayoutsPage() {
   return (
-    <main className="p-6 space-y-6">
+    <section className="p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Payout requests</h1>
       <p>
         Manual execution only. Claim before transferring. Check the originating
@@ -21,7 +21,7 @@ export default function PayoutsPage() {
       <AuthorizedProductScope adminOnly>
         {(scope) => <PayoutAdministration {...scope} />}
       </AuthorizedProductScope>
-    </main>
+    </section>
   );
 }
 function PayoutAdministration({
@@ -104,8 +104,15 @@ function PayoutAdministration({
 }
 function OwnershipVerification({ productId }: { productId: string }) {
   const utils = api.useUtils();
-  const mutation = api.payouts.verifyOwnership.useMutation({
-    onSettled: async (_data, _error, variables) => {
+  const mutationOptions = {
+    onSettled: async (
+      _data: unknown,
+      _error: unknown,
+      variables: Pick<
+        RouterInputs["payouts"]["verifyOwnership"],
+        "ownerUserId" | "productId"
+      >,
+    ) => {
       const ownerScope = {
         userId: variables.ownerUserId,
         productId: variables.productId,
@@ -121,28 +128,33 @@ function OwnershipVerification({ productId }: { productId: string }) {
         }),
       ]);
     },
-  });
+  };
+  const mutation = api.payouts.verifyOwnership.useMutation(mutationOptions);
+  const enrollment = api.payouts.enrollReferrer.useMutation(mutationOptions);
+  const [mode, setMode] = useState<"enroll" | "existing">("enroll");
   const busy = useRef(false);
   const [verified, setVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState({
     participantId: "",
+    programId: "",
     ownerUserId: "",
     evidence: "",
-    name: "",
-    details: "",
   });
   return (
     <details className="border rounded p-4">
       <summary>
-        Verify participant ownership and payout recipient (administrator)
+        Verify participant ownership or enroll a RefRef referrer (administrator)
       </summary>
       <p>
-        Verify that this participant belongs to the email-verified RefRef person
-        and independently check transfer recipient details. The referrer does
-        not need an AI-marketer backend account or subscription. Email
-        similarity, signup and widget tokens alone are not evidence. Existing
-        verified financial ownership cannot be reassigned here.
+        Verify that this participant belongs to the email-verified RefRef
+        person. Transfer details are supplied by the participant when requesting
+        a payout. The referrer does not need an AI-marketer backend account or
+        subscription. Email similarity, signup and widget tokens alone are not
+        evidence. Existing verified financial ownership cannot be reassigned
+        here. For account enrollment, use the RefRef account ID shown in the
+        person&apos;s own portal and an active program ID. This creates no
+        backend account or organization membership.
       </p>
       <form
         className="space-y-3"
@@ -151,45 +163,70 @@ function OwnershipVerification({ productId }: { productId: string }) {
           if (busy.current || !verified) return;
           busy.current = true;
           setError(null);
-          mutation.mutate(
-            {
-              productId,
-              participantId: fields.participantId,
-              ownerUserId: fields.ownerUserId,
-              evidence: fields.evidence,
-              externalOwnershipVerified: true,
-              recipient: { name: fields.name, details: fields.details },
+          const input = {
+            productId,
+            ownerUserId: fields.ownerUserId,
+            evidence: fields.evidence,
+            externalOwnershipVerified: true as const,
+          };
+          const callbacks = {
+            onSuccess: () => setVerified(false),
+            onError: (error: { message: string }) =>
+              setError(error.message || "Ownership verification failed"),
+            onSettled: () => {
+              busy.current = false;
             },
-            {
-              onSuccess: () => setVerified(false),
-              onError: (error) =>
-                setError(error.message || "Ownership verification failed"),
-              onSettled: () => {
-                busy.current = false;
-              },
-            },
-          );
+          };
+          if (mode === "enroll")
+            enrollment.mutate(
+              { ...input, programId: fields.programId },
+              callbacks,
+            );
+          else
+            mutation.mutate(
+              { ...input, participantId: fields.participantId },
+              callbacks,
+            );
         }}
       >
+        <label className="block">
+          Verification operation
+          <select
+            className="block border rounded p-2"
+            value={mode}
+            disabled={mutation.isPending || enrollment.isPending}
+            onChange={(event) => {
+              setMode(
+                event.target.value === "existing" ? "existing" : "enroll",
+              );
+              setVerified(false);
+            }}
+          >
+            <option value="enroll">
+              Enroll verified RefRef account and assign program code
+            </option>
+            <option value="existing">
+              Verify an existing native participant
+            </option>
+          </select>
+        </label>
         {(
           [
-            ["participantId", "Native participant ID"],
+            ...(mode === "enroll"
+              ? ([["programId", "Active program ID"]] as const)
+              : ([["participantId", "Native participant ID"]] as const)),
             ["ownerUserId", "Verified RefRef account ID"],
             [
               "evidence",
               "Participant ownership evidence reference (no secrets)",
             ],
-            ["name", "Verified recipient name"],
-            ["details", "Verified transfer recipient details"],
           ] as const
         ).map(([key, label]) => (
           <label key={key} className="block">
             {label}
             <Input
               required
-              maxLength={
-                key === "details" ? 1000 : key === "evidence" ? 500 : 200
-              }
+              maxLength={key === "evidence" ? 500 : 200}
               value={fields[key]}
               onChange={(e) =>
                 setFields((f) => ({ ...f, [key]: e.target.value }))
@@ -203,12 +240,26 @@ function OwnershipVerification({ productId }: { productId: string }) {
             checked={verified}
             onChange={(e) => setVerified(e.target.checked)}
           />
-          I independently verified ownership, identity and recipient details
+          I independently verified participant ownership and the RefRef account
+          identity
         </label>
-        <Button disabled={!verified || mutation.isPending}>
-          Record verified ownership
+        <Button
+          disabled={!verified || mutation.isPending || enrollment.isPending}
+        >
+          {mode === "enroll"
+            ? "Enroll verified referrer"
+            : "Record verified ownership"}
         </Button>
-        {mutation.isSuccess && <p>Ownership recorded.</p>}
+        {mode === "existing" && mutation.isSuccess && (
+          <p>Ownership recorded.</p>
+        )}
+        {mode === "enroll" && enrollment.isSuccess && (
+          <p role="status">
+            Assigned code <code>{enrollment.data.code}</code> for program{" "}
+            {enrollment.data.programId}. The referrer can read it in their own
+            portal.
+          </p>
+        )}
         {error && <p role="alert">{error}</p>}
       </form>
     </details>

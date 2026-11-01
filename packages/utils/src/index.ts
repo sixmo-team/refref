@@ -3,10 +3,10 @@ export { default as coredbPlugin } from "./plugins/coredb.js";
 
 // Export refcode utilities
 export {
-  generateGlobalCode,
+  generateRefcode,
+  validateRefcode,
   validateVanityCode,
   normalizeCode,
-  isGlobalCodeFormat,
   isRefcodeFormat,
 } from "./refcode.js";
 

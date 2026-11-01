@@ -4,7 +4,7 @@ import {
   protectedProcedure,
   adminProcedure,
 } from "@/server/api/trpc";
-import { db, schema } from "@/server/db";
+import { schema } from "@/server/db";
 const {
   product,
   program: programTable,
@@ -24,61 +24,85 @@ import {
   getTableColumns,
 } from "drizzle-orm";
 import assert from "assert";
-import { getSetupProgress, type SetupProgress } from "@/lib/program";
+import { getSetupProgress } from "@/lib/program";
 import {
   programConfigV1Schema,
   type ProgramConfigV1Type,
   configuredProgramTemplateSchema,
-  type ConfiguredProgramTemplateType,
   WidgetConfigType,
-  widgetConfigSchema,
   defaultWidgetConfig,
   getAllProgramTemplates,
   getProgramTemplateById,
   createTemplateRuleSpecs,
   frozenCommissionRuleConfigSchema,
   currencySchema,
+  frozenCommissionSchema,
+  type RewardConfigType,
+  partnerRulesBodySchema,
 } from "@refref/types";
 import { TRPCError } from "@trpc/server";
 import {
   generateWidgetConfigFromTemplate,
-  mergeWidgetConfig,
+  type ProductMetadata,
 } from "@/lib/template-config-generator";
 import { safeError } from "@refref/utils";
 import { isDeepStrictEqual } from "node:util";
-import { referralTermsFingerprint } from "@refref/coredb";
+import {
+  referralTermsFingerprint,
+  partnerTermsFingerprint,
+  publishPartnerTerms,
+  approvedReferralEconomics,
+  ReferralError,
+  type ApprovedReferralEconomics,
+  setPartnerSelfService,
+  type CoreTransaction,
+} from "@refref/coredb";
 import { validateProductScope } from "@refref/coredb/security";
 
-/**
- * Transforms input and template data into the final program config.
- * @param config - The validated user input.
- * @returns The final config object conforming to ProgramConfigV1Type.
- */
-function transformInputToProgramConfig(
-  config: ConfiguredProgramTemplateType,
-): ProgramConfigV1Type {
-  // Initialize the program config
-  const finalConfig: ProgramConfigV1Type = {
-    schemaVersion: 1,
-    widgetConfig: defaultWidgetConfig,
-    actions: undefined, // Legacy field, no longer used
-    notification: {}, // Placeholder
-  };
-
-  // Validate the final config against the Zod schema
-  const validationResult = programConfigV1Schema.safeParse(finalConfig);
-  if (!validationResult.success) {
-    console.error("Program config validation failed");
-    // Throw an error or handle invalid config state appropriately
+async function validateFinancialCommissionRules(
+  tx: CoreTransaction,
+  programId: string,
+  terms: RewardConfigType,
+) {
+  const rules = await tx
+    .select()
+    .from(schema.rewardRule)
+    .where(
+      and(
+        eq(schema.rewardRule.programId, programId),
+        eq(schema.rewardRule.isActive, true),
+      ),
+    );
+  const commission = frozenCommissionSchema.safeParse({
+    basis: terms.referrer?.basis ?? null,
+    rules: rules
+      .filter(
+        (rule) =>
+          rule.config.participantType === "referrer" &&
+          rule.config.trigger.event === "purchase" &&
+          rule.config.reward.type === "cash",
+      )
+      .map((rule) => ({
+        ruleId: rule.id,
+        priority: rule.priority ?? 0,
+        config: rule.config,
+      })),
+  });
+  const currency = terms.referrer?.currency ?? terms.referee?.currency;
+  if (
+    !commission.success ||
+    commission.data.rules.some(
+      (rule) =>
+        rule.config.reward.currency !== currency ||
+        (rule.config.conditions?.firstPaidOnly ?? false) !==
+          (terms.firstPaidOnly ?? false),
+    )
+  )
     throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Failed to generate valid program configuration.",
-      cause: validationResult.error,
+      code: "BAD_REQUEST",
+      message:
+        "Active purchase cash rules must match the exact financial contract; edit incompatible custom rules before conversion",
     });
-  }
-
-  // Return the validated config data
-  return validationResult.data;
 }
 
 const identityScopeSchema = z
@@ -95,6 +119,117 @@ const programReadInputSchema = z
   .strict();
 
 export const programRouter = createTRPCRouter({
+  partnerRules: protectedProcedure
+    .input(programReadInputSchema)
+    .query(async ({ ctx, input }) => {
+      if (
+        input.scope.userId !== ctx.userId ||
+        input.scope.organizationId !== ctx.activeOrganizationId
+      )
+        throw new TRPCError({ code: "FORBIDDEN" });
+      return ctx.db.transaction(async (tx) => {
+        const [program] = await tx
+          .select()
+          .from(programTable)
+          .where(eq(programTable.id, input.id))
+          .for("share");
+        if (!program) throw new TRPCError({ code: "FORBIDDEN" });
+        await validateProductScope(
+          tx,
+          ctx.activeOrganizationId,
+          program.productId,
+          program.id,
+        );
+        let economics: ApprovedReferralEconomics | null = null;
+        try {
+          economics = await approvedReferralEconomics(tx, program);
+        } catch (error) {
+          if (
+            !(error instanceof ReferralError) ||
+            error.code !== "REFERRAL_CONDITIONS_NOT_MET"
+          )
+            throw error;
+        }
+        const [rules] = await tx
+          .select()
+          .from(schema.programTerms)
+          .where(
+            and(
+              eq(
+                schema.programTerms.id,
+                program.config?.selfService?.termsId ?? "",
+              ),
+              eq(schema.programTerms.productId, program.productId),
+              eq(schema.programTerms.programId, program.id),
+            ),
+          );
+        return {
+          enabled: program.config?.selfService?.enabled ?? false,
+          economics: economics
+            ? {
+                ...economics,
+                startDate: program.startDate,
+                endDate: program.endDate,
+              }
+            : null,
+          termsFingerprint: economics
+            ? partnerTermsFingerprint(program, economics.commission)
+            : null,
+          rules: rules
+            ? {
+                id: rules.id,
+                body: rules.body,
+                rewardConfig: rules.rewardConfig,
+                commission: rules.commission,
+                startDate: rules.startDate,
+                endDate: rules.endDate,
+                publishedAt: rules.createdAt,
+              }
+            : null,
+        };
+      });
+    }),
+  publishPartnerRules: adminProcedure
+    .input(
+      z
+        .object({
+          productId: z.string().min(1),
+          programId: z.string().min(1),
+          body: partnerRulesBodySchema,
+          termsFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+          confirmReviewedRules: z.literal(true),
+        })
+        .strict(),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.productId,
+        input.programId,
+      );
+      const published = await publishPartnerTerms(ctx.db, ctx.userId, input);
+      return { id: published.id };
+    }),
+  setPartnerSelfService: adminProcedure
+    .input(
+      z
+        .object({
+          productId: z.string().min(1),
+          programId: z.string().min(1),
+          enabled: z.boolean(),
+        })
+        .strict(),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.productId,
+        input.programId,
+      );
+      return setPartnerSelfService(ctx.db, input);
+    }),
   create: protectedProcedure
     .input(
       z.object({
@@ -311,6 +446,14 @@ export const programRouter = createTRPCRouter({
             }
           }
         }
+        if (
+          rewardConfig &&
+          (rewardConfig.firstPaidOnly ||
+            programTemplate.rewards.requiresVerifiedPurchase ||
+            program.config?.serverTracking ||
+            program.status === "pending_approval")
+        )
+          await validateFinancialCommissionRules(tx, id, rewardConfig);
 
         // 2. Generate widget config from brand and reward settings
         let widgetConfig: WidgetConfigType;
@@ -326,11 +469,38 @@ export const programRouter = createTRPCRouter({
           const productName = productData?.name || "Our Platform";
 
           // Parse product metadata if available
-          let productMetadata = undefined;
+          let productMetadata: ProductMetadata | undefined;
           if (productData?.metadata) {
             try {
-              productMetadata = JSON.parse(productData.metadata);
-            } catch (e) {
+              const metadata: unknown = JSON.parse(productData.metadata);
+              if (
+                metadata &&
+                typeof metadata === "object" &&
+                !Array.isArray(metadata)
+              ) {
+                productMetadata = {};
+                if (
+                  "industry" in metadata &&
+                  typeof metadata.industry === "string"
+                )
+                  productMetadata.industry = metadata.industry;
+                if (
+                  "category" in metadata &&
+                  typeof metadata.category === "string"
+                )
+                  productMetadata.category = metadata.category;
+                if (
+                  "description" in metadata &&
+                  typeof metadata.description === "string"
+                )
+                  productMetadata.description = metadata.description;
+                if (
+                  "targetAudience" in metadata &&
+                  typeof metadata.targetAudience === "string"
+                )
+                  productMetadata.targetAudience = metadata.targetAudience;
+              }
+            } catch {
               // If metadata is not valid JSON, ignore it
               console.warn("Failed to parse product metadata");
             }
@@ -372,6 +542,7 @@ export const programRouter = createTRPCRouter({
               ? program.config.serverTracking
               : undefined,
           widgetConfig,
+          selfService: program.config?.selfService,
           brandConfig: brandConfig ?? program.config?.brandConfig,
           actions: undefined,
           notification: undefined,
@@ -379,7 +550,7 @@ export const programRouter = createTRPCRouter({
         };
 
         // 4. Update the program record within the transaction
-        const [updatedProgram] = await tx
+        await tx
           .update(programTable)
           .set({
             config: finalProgramConfig,
@@ -500,7 +671,12 @@ export const programRouter = createTRPCRouter({
           !isDeepStrictEqual(
             input.config.rewardConfig,
             program.config?.rewardConfig,
-          )
+          ) ||
+          (input.config.selfService !== undefined &&
+            !isDeepStrictEqual(
+              input.config.selfService,
+              program.config?.selfService,
+            ))
         )
           throw new TRPCError({
             code: "FORBIDDEN",
@@ -509,7 +685,12 @@ export const programRouter = createTRPCRouter({
           });
         const [updatedProgram] = await tx
           .update(programTable)
-          .set({ config: input.config })
+          .set({
+            config: {
+              ...input.config,
+              selfService: program.config?.selfService,
+            },
+          })
           .where(eq(programTable.id, program.id))
           .returning();
         assert(updatedProgram, "Program not updated");
@@ -708,6 +889,12 @@ export const programRouter = createTRPCRouter({
           productId: z.string().min(1),
           programId: z.string().min(1),
           termsFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+          reviewedPeriod: z
+            .object({
+              startDate: z.string().datetime().nullable(),
+              endDate: z.string().datetime().nullable(),
+            })
+            .strict(),
           calculationVersion: z.literal(1),
           edgeExamplesApproved: z.literal(true),
           ownershipPolicyVerified: z.literal(true),
@@ -747,6 +934,16 @@ export const programRouter = createTRPCRouter({
             message:
               "Explicit terms/basis and matching reviewed fingerprint required",
           });
+        if (
+          (program.startDate?.toISOString() ?? null) !==
+            input.reviewedPeriod.startDate ||
+          (program.endDate?.toISOString() ?? null) !==
+            input.reviewedPeriod.endDate
+        )
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Program dates changed; reload and review before approval",
+          });
         const currency = currencySchema.safeParse(
           terms.referrer?.currency ?? terms.referee?.currency,
         );
@@ -761,6 +958,7 @@ export const programRouter = createTRPCRouter({
         createTemplateRuleSpecs(program.programTemplateId, terms).forEach(
           (spec) => frozenCommissionRuleConfigSchema.parse(spec.config),
         );
+        await validateFinancialCommissionRules(tx, program.id, terms);
         const startDate = input.startDate
           ? new Date(input.startDate)
           : program.startDate;
@@ -835,6 +1033,8 @@ export const programRouter = createTRPCRouter({
                 WHERE ${referral.programId} = ${program.id})
               OR EXISTS (SELECT 1 FROM ${schema.reward}
                 WHERE ${schema.reward.programId} = ${program.id})
+              OR EXISTS (SELECT 1 FROM ${schema.programTerms}
+                WHERE ${schema.programTerms.programId} = ${program.id})
             `,
           })
           .from(programTable)

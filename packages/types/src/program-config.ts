@@ -26,33 +26,6 @@ export type ProgramTemplateConfigType = z.infer<
   typeof programTemplateConfigSchema
 >;
 
-// --- Action Config Schemas ---
-
-// Enums for sub-configs
-const trackingMethodEnum = z.enum([
-  "unique_link",
-  "coupon_code",
-  "api",
-  "manual",
-]);
-const verificationMethodEnum = z.enum(["automatic", "manual"]);
-
-// Tracking configuration schema
-const trackingConfigSchema = z.object({
-  method: trackingMethodEnum,
-  urlSettings: z
-    .object({
-      allowCustom: z.boolean().optional(),
-      domain: z.string().url({ message: "Invalid URL" }).optional(),
-    })
-    .optional(),
-});
-
-// Verification configuration schema
-const verificationConfigSchema = z.object({
-  method: verificationMethodEnum,
-});
-
 export const RewardCurrencies = ["USD", "EUR", "GBP", "RUB"] as const;
 
 export const currencySchema = z.enum(RewardCurrencies);
@@ -95,11 +68,29 @@ export const brandConfigSchema = z.object({
 });
 export type BrandConfigType = z.infer<typeof brandConfigSchema>;
 
+export const notificationConfigSchema = z.object({
+  welcomeEmail: z.object({
+    enabled: z.boolean(),
+    subject: z.string(),
+    template: z.string(),
+  }),
+  successEmail: z.object({
+    enabled: z.boolean(),
+    subject: z.string(),
+    template: z.string(),
+  }),
+  inApp: z.object({
+    progressUpdates: z.boolean(),
+    rewardNotifications: z.boolean(),
+  }),
+});
+
+export type NotificationConfigType = z.infer<typeof notificationConfigSchema>;
 // Notification schema
-export const notificationConfigV1Schema = z
-  .object({
-    // Add notification config fields when implemented
-  })
+export const notificationConfigV1Schema = notificationConfigSchema
+  .partial()
+  .extend({ installation: z.unknown().optional() })
+  .catchall(z.unknown())
   .optional();
 export type NotificationConfigV1Type = z.infer<
   typeof notificationConfigV1Schema
@@ -117,6 +108,13 @@ export const programConfigV1Schema = z.object({
       approvedAt: z.string().datetime(),
       termsFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
       ownershipVerified: z.literal(true),
+    })
+    .strict()
+    .optional(),
+  selfService: z
+    .object({
+      enabled: z.boolean(),
+      termsId: z.string().min(1).optional(),
     })
     .strict()
     .optional(),

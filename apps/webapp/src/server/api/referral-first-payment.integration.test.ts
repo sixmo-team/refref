@@ -66,9 +66,22 @@ process.env.BETTER_AUTH_SECRET =
   "first-payment-isolated-test-secret-at-least-thirty-two-characters";
 process.env.PAYOUT_MANUAL_EXECUTION_NAMESPACE = "test-account-" + randomUUID();
 const db = createDb(url);
+// Only synchronization-fixture DDL may use the test migrator; all business calls keep the runtime role.
+const ddlUrl = process.env.TEST_DDL_DATABASE_URL;
+if (ddlUrl) {
+  const target = new URL(ddlUrl);
+  const runtimeTarget = new URL(url);
+  if (
+    target.host !== runtimeTarget.host ||
+    target.pathname !== runtimeTarget.pathname
+  )
+    throw new Error(
+      "TEST_DDL_DATABASE_URL must target the same dedicated test database",
+    );
+}
+const ddlDb = ddlUrl ? createDb(ddlUrl) : db;
 const auth = getAuth({
   baseURL: "http://localhost:4000",
-  resendApiKey: "debug_key",
   db,
   schema,
   enabledSocialAuth: [],
@@ -92,7 +105,7 @@ const ids = {
   buyerExternal: `tenant-buyer-${suffix}`,
 };
 const adminIdentity = { userId: ids.admin, organizationId: ids.org };
-const code = suffix.replaceAll("-", "").slice(0, 7);
+const code = `anna${suffix.replaceAll("-", "").slice(0, 16)}`;
 let app: FastifyInstance;
 let key: string;
 let legacyKey: string;
@@ -213,7 +226,7 @@ async function createFinancialFixture(
 ) {
   const fixtureId = randomUUID();
   const programId = `rf-concurrent-${fixtureId}`;
-  const fixtureCode = fixtureId.replaceAll("-", "").slice(0, 7);
+  const fixtureCode = `partner${fixtureId.replaceAll("-", "").slice(0, 16)}`;
   await db.insert(schema.program).values({
     id: programId,
     productId: ids.product,
@@ -230,6 +243,7 @@ async function createFinancialFixture(
     productId: ids.product,
     programId,
     termsFingerprint: referralTermsFingerprint(terms),
+    reviewedPeriod: { startDate: null, endDate: null },
     calculationVersion: 1,
     edgeExamplesApproved: true,
     ownershipPolicyVerified: true,
@@ -763,6 +777,7 @@ beforeAll(async () => {
     productId: ids.product,
     programId: ids.program,
     termsFingerprint: referralTermsFingerprint(settings),
+    reviewedPeriod: { startDate: null, endDate: null },
     calculationVersion: 1,
     edgeExamplesApproved: true,
     ownershipPolicyVerified: true,
@@ -783,10 +798,6 @@ beforeAll(async () => {
     ownerUserId: ids.admin,
     evidence: `synthetic-test-verification-${suffix}`,
     externalOwnershipVerified: true,
-    recipient: {
-      name: "Verified fixture recipient",
-      details: "Synthetic fixture transfer account",
-    },
   });
   await db.insert(schema.refcode).values({
     code,
@@ -833,6 +844,7 @@ beforeAll(async () => {
 // no bypass trigger, destructive cleanup, or deletion of real financial records is part of the test.
 afterAll(async () => {
   await app?.close();
+  if (ddlDb !== db) await ddlDb.$client.end();
 });
 
 describe("native first-payment C1 and payout path", () => {
@@ -872,12 +884,51 @@ describe("native first-payment C1 and payout path", () => {
         productId: ids.product,
         programId: ids.program,
         termsFingerprint: "0".repeat(64),
+        reviewedPeriod: { startDate: null, endDate: null },
         calculationVersion: 1,
         edgeExamplesApproved: true,
         ownershipPolicyVerified: true,
       }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
+  it.each(["startDate", "endDate"] as const)(
+    "rejects approval of a saved %s changed after review",
+    async (field) => {
+      const fixture = await createFinancialFixture();
+      const program = await caller(programRouter);
+      const reviewed = await program.getById({
+        id: fixture.programId,
+        scope: adminIdentity,
+      });
+      const changed = new Date("2099-01-01T12:00:00.000Z");
+      await db
+        .update(schema.program)
+        .set({ [field]: changed })
+        .where(eq(schema.program.id, fixture.programId));
+      await expect(
+        program.approveServerTracking({
+          productId: ids.product,
+          programId: fixture.programId,
+          termsFingerprint: reviewed.termsFingerprint!,
+          reviewedPeriod: {
+            startDate: reviewed.startDate?.toISOString() ?? null,
+            endDate: reviewed.endDate?.toISOString() ?? null,
+          },
+          calculationVersion: 1,
+          edgeExamplesApproved: true,
+          ownershipPolicyVerified: true,
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      const current = await program.getById({
+        id: fixture.programId,
+        scope: adminIdentity,
+      });
+      expect(current[field]).toEqual(changed);
+      expect(current.config!.serverTracking).toEqual(
+        reviewed.config!.serverTracking,
+      );
+    },
+  );
   it.each([1.001, 100_000_000])(
     "rejects unsupported buyer minimum %s on native save without altering approved terms",
     async (minPurchaseAmount) => {
@@ -946,6 +997,7 @@ describe("native first-payment C1 and payout path", () => {
           productId: ids.product,
           programId: fixture.programId,
           termsFingerprint: referralTermsFingerprint(terms),
+          reviewedPeriod: { startDate: null, endDate: null },
           calculationVersion: 1,
           edgeExamplesApproved: true,
           ownershipPolicyVerified: true,
@@ -991,6 +1043,7 @@ describe("native first-payment C1 and payout path", () => {
         productId: ids.product,
         programId: fixture.programId,
         termsFingerprint: referralTermsFingerprint(terms),
+        reviewedPeriod: { startDate: null, endDate: null },
         calculationVersion: 1,
         edgeExamplesApproved: true,
         ownershipPolicyVerified: true,
@@ -1197,7 +1250,11 @@ describe("native first-payment C1 and payout path", () => {
         })
       ).statusCode,
     ).toBe(400);
-    const { customer: _customer, ...withoutCustomer } = purchase.payload;
+    const { customer, ...withoutCustomer } = purchase.payload;
+    expect(customer).toEqual({
+      name: "Original buyer profile",
+      email: `buyer-${suffix}@example.test`,
+    });
     const missingCustomer = await post("/v1/track/purchase", {
       ...purchase,
       payload: withoutCustomer,
@@ -1296,7 +1353,7 @@ describe("native first-payment C1 and payout path", () => {
       .where(eq(schema.participant.id, ids.buyer));
     expect(buyer!.name).toBe("Updated original buyer");
   });
-  it("preserves native legacy signup discount values and immutable configured coupon terms", async () => {
+  it("preserves native legacy web signup discount values and immutable original coupon terms", async () => {
     await db
       .insert(schema.eventDefinition)
       .values({
@@ -1336,6 +1393,8 @@ describe("native first-payment C1 and payout path", () => {
     const events = await caller(eventsRouter);
     const rewards = await caller(rewardsRouter);
     const now = Date.now();
+    const expectedExpiry = new Date(now);
+    expectedExpiry.setDate(expectedExpiry.getDate() + 30);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(now);
     try {
@@ -1367,11 +1426,11 @@ describe("native first-payment C1 and payout path", () => {
           rewardType: "discount",
         });
         expect(detail.metadata?.couponCode?.trim().length).toBeGreaterThan(0);
-        expect(detail.metadata?.validUntil).toBe(
-          new Date(now + 7 * 86_400_000).toISOString(),
+        expect(detail.metadata?.validUntil).toBe(expectedExpiry.toISOString());
+        expect(detail.metadata?.minPurchaseAmount).toBe(
+          ruleId === percentage!.id ? 50 : undefined,
         );
-        expect(detail.metadata?.minPurchaseAmount).toBe(75);
-        const replay = await processEventForRewards(db, event.id);
+        const replay = await processEventForRewards(db, event.id, "web");
         expect(replay.find((row) => row.id === detail.id)?.metadata).toEqual(
           detail.metadata,
         );
@@ -1461,6 +1520,10 @@ describe("native first-payment C1 and payout path", () => {
     const b = await caller(payoutsRouter, operatorHeaders);
     const results = await Promise.allSettled([
       portal.requestPayout({
+        recipient: {
+          name: "Fixture recipient",
+          details: "Synthetic transfer account",
+        },
         userId: ids.admin,
         productId: ids.product,
         amountMinor: 60,
@@ -1468,6 +1531,10 @@ describe("native first-payment C1 and payout path", () => {
         idempotencyKey: `payout-a-${suffix}`,
       }),
       portal.requestPayout({
+        recipient: {
+          name: "Fixture recipient",
+          details: "Synthetic transfer account",
+        },
         userId: ids.admin,
         productId: ids.product,
         amountMinor: 60,
@@ -1483,6 +1550,10 @@ describe("native first-payment C1 and payout path", () => {
     expect(
       (
         await portal.requestPayout({
+          recipient: {
+            name: "Fixture recipient",
+            details: "Synthetic transfer account",
+          },
           userId: ids.admin,
           productId: ids.product,
           amountMinor: 60,
@@ -1493,6 +1564,10 @@ describe("native first-payment C1 and payout path", () => {
     ).toBe(payout.id);
     await expect(
       portal.requestPayout({
+        recipient: {
+          name: "Fixture recipient",
+          details: "Synthetic transfer account",
+        },
         userId: ids.admin,
         productId: ids.product,
         amountMinor: 61,
@@ -1574,6 +1649,10 @@ describe("native first-payment C1 and payout path", () => {
       )[0]!.status,
     ).toBe("approved");
     const next = await portal.requestPayout({
+      recipient: {
+        name: "Fixture recipient",
+        details: "Synthetic transfer account",
+      },
       userId: ids.admin,
       productId: ids.product,
       amountMinor: 40,
@@ -1709,10 +1788,6 @@ describe("native first-payment C1 and payout path", () => {
         ownerUserId: buyer.userId,
         evidence: `generated-reciprocal-${fixtureId}`,
         externalOwnershipVerified: true,
-        recipient: {
-          name: "Reciprocal owner",
-          details: "Synthetic transfer account",
-        },
       });
     }
     const fixtures = [
@@ -1774,7 +1849,7 @@ describe("native first-payment C1 and payout path", () => {
     const gateName = `reciprocal_pause_${fixtureId.replaceAll("-", "").slice(0, 12)}`;
     const functionName = `${gateName}_fn`;
     // A synchronization-only trigger pauses both real transactions after their buyer lock.
-    await db.execute(sql`CREATE FUNCTION ${sql.identifier(functionName)}() RETURNS trigger LANGUAGE plpgsql AS $$
+    await ddlDb.execute(sql`CREATE FUNCTION ${sql.identifier(functionName)}() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
         IF NEW.id IN (TG_ARGV[0], TG_ARGV[1]) AND OLD.first_purchase_event_id IS NULL AND NEW.first_purchase_event_id IS NULL THEN
           PERFORM pg_advisory_xact_lock_shared(hashtextextended(TG_ARGV[2], 0));
@@ -1782,7 +1857,7 @@ describe("native first-payment C1 and payout path", () => {
         RETURN NEW;
       END $$`);
     // Identifiers and arguments below contain only the locally generated UUID/prefix.
-    await db.execute(
+    await ddlDb.execute(
       sql.raw(
         `CREATE TRIGGER ${gateName} AFTER UPDATE ON participant FOR EACH ROW EXECUTE FUNCTION ${functionName}('${buyers[0]!.id}', '${buyers[1]!.id}', '${gateName}')`,
       ),
@@ -1839,10 +1914,10 @@ describe("native first-payment C1 and payout path", () => {
         await gate`SELECT pg_advisory_unlock(hashtextextended(${gateName}, 0))`;
       await Promise.allSettled([inFlight]);
       gate.release();
-      await db.execute(
+      await ddlDb.execute(
         sql`DROP TRIGGER IF EXISTS ${sql.identifier(gateName)} ON ${schema.participant}`,
       );
-      await db.execute(
+      await ddlDb.execute(
         sql`DROP FUNCTION IF EXISTS ${sql.identifier(functionName)}()`,
       );
     }
@@ -2221,6 +2296,7 @@ describe("native first-payment C1 and payout path", () => {
             productId: ids.product,
             programId: fixture.programId,
             termsFingerprint: referralTermsFingerprint(changedTerms),
+            reviewedPeriod: { startDate: null, endDate: null },
             calculationVersion: 1,
             edgeExamplesApproved: true,
             ownershipPolicyVerified: true,
@@ -2282,10 +2358,15 @@ describe("native first-payment C1 and payout path", () => {
         currency: "RUB",
       });
       // The same ordinary member can still change nonfinancial settings from a fresh state.
+      const notification = {
+        welcomeEmail: { enabled: true, subject: "Welcome", template: "Hello" },
+        installation: { completed: true },
+      };
       const updated = await member.updateConfig({
         id: fixture.programId,
         config: {
           ...current.config!,
+          notification,
           brandConfig: {
             primaryColor: "#654321",
             landingPageUrl: "https://fresh.example.test",
@@ -2297,6 +2378,10 @@ describe("native first-payment C1 and payout path", () => {
         current.config!.serverTracking,
       );
       expect(updated.config!.brandConfig!.primaryColor).toBe("#654321");
+      const reloaded = await (
+        await caller(programRouter)
+      ).getById({ id: fixture.programId, scope: adminIdentity });
+      expect(reloaded.config!.notification).toEqual(notification);
     },
   );
   it("never resolves old approved buyer terms with concurrently saved unapproved rules", async () => {
@@ -2356,6 +2441,7 @@ describe("native first-payment C1 and payout path", () => {
       productId: ids.product,
       programId: fixture.programId,
       termsFingerprint: referralTermsFingerprint(changedTerms),
+      reviewedPeriod: { startDate: null, endDate: null },
       calculationVersion: 1,
       edgeExamplesApproved: true,
       ownershipPolicyVerified: true,
@@ -3072,15 +3158,416 @@ describe("native follow-up legacy regressions", () => {
     expect(activeTemplateRules).toHaveLength(1);
   });
 
+  it.each(
+    [
+      {
+        name: "missing first-paid policy",
+        conditions: undefined,
+        amount: 1,
+        currency: "RUB",
+      },
+      {
+        name: "subcent fixed amount",
+        conditions: { firstPaidOnly: true },
+        amount: 0.001,
+        currency: "RUB",
+      },
+      {
+        name: "signed amount",
+        conditions: { firstPaidOnly: true },
+        amount: -1,
+        currency: "RUB",
+      },
+      {
+        name: "different currency",
+        conditions: { firstPaidOnly: true },
+        amount: 1,
+        currency: "USD",
+      },
+    ].flatMap((config) =>
+      (["save", "approve"] as const).map((operation) => ({
+        ...config,
+        operation,
+      })),
+    ),
+  )(
+    "rejects incompatible custom purchase $name before $operation commits",
+    async ({ conditions, amount, currency, operation }) => {
+      const conversionTerms: RewardConfigType = {
+        firstPaidOnly: true,
+        referrer: initialTerms.referrer,
+      };
+      const fixture = await createLegacyRegressionFixture();
+      const rules = await caller(rewardRulesRouter);
+      const welcome = await rules.create({
+        programId: fixture.programId,
+        name: "Unrelated historical welcome",
+        type: "custom_signup_history",
+        config: {
+          schemaVersion: 1,
+          trigger: { event: "signup" },
+          participantType: "referee",
+          reward: { type: "cash", unit: "fixed", amount: 5, currency: "USD" },
+        },
+      });
+      const history = await (
+        await caller(eventsRouter)
+      ).create({
+        productId: ids.product,
+        programId: fixture.programId,
+        participantId: fixture.participantId,
+        eventType: "signup",
+        metadata: { schemaVersion: 1 },
+      });
+      const custom = await rules.create({
+        programId: fixture.programId,
+        name: "Participating custom purchase",
+        type: "custom_purchase_cash",
+        config: {
+          schemaVersion: 1,
+          trigger: { event: "purchase" },
+          participantType: "referrer",
+          conditions,
+          reward: { type: "cash", unit: "fixed", amount, currency },
+        },
+      });
+      if (operation === "approve")
+        await db
+          .update(schema.program)
+          .set({
+            status: "pending_approval",
+            config: {
+              schemaVersion: 1,
+              widgetConfig: defaultWidgetConfig,
+              rewardConfig: conversionTerms,
+            },
+          })
+          .where(eq(schema.program.id, fixture.programId));
+      const readState = async () => ({
+        program: await db
+          .select()
+          .from(schema.program)
+          .where(eq(schema.program.id, fixture.programId)),
+        rules: await db
+          .select()
+          .from(schema.rewardRule)
+          .where(eq(schema.rewardRule.programId, fixture.programId))
+          .orderBy(schema.rewardRule.id),
+        events: await db
+          .select()
+          .from(schema.event)
+          .where(eq(schema.event.programId, fixture.programId)),
+        rewards: await db
+          .select()
+          .from(schema.reward)
+          .where(eq(schema.reward.programId, fixture.programId)),
+      });
+      const before = await readState();
+      expect(before.rewards).toMatchObject([
+        { eventId: history.id, rewardRuleId: welcome!.id, amount: "5.00" },
+      ]);
+      const programs = await caller(programRouter);
+      await expect(
+        operation === "save"
+          ? programs.saveTemplateConfiguration({
+              id: fixture.programId,
+              templateConfig: { rewardConfig: conversionTerms },
+            })
+          : programs.approveServerTracking({
+              productId: ids.product,
+              programId: fixture.programId,
+              termsFingerprint: referralTermsFingerprint(conversionTerms),
+              reviewedPeriod: { startDate: null, endDate: null },
+              calculationVersion: 1,
+              edgeExamplesApproved: true,
+              ownershipPolicyVerified: true,
+            }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(await readState()).toEqual(before);
+      if (operation === "save") {
+        expect(
+          await rules.update({
+            id: custom!.id,
+            name: "Still editable legacy purchase",
+          }),
+        ).toMatchObject({ id: custom!.id, isActive: true });
+        expect(await rules.getById(welcome!.id)).toEqual(welcome);
+      }
+    },
+  );
+
+  it("retains compatible custom purchase rules and unrelated signup history through approved conversion", async () => {
+    const fixture = await createLegacyRegressionFixture();
+    const conversionTerms: RewardConfigType = {
+      firstPaidOnly: true,
+      referrer: initialTerms.referrer,
+    };
+    const rules = await caller(rewardRulesRouter);
+    const welcome = await rules.create({
+      programId: fixture.programId,
+      name: "Retained welcome",
+      type: "custom_retained_signup",
+      config: {
+        schemaVersion: 1,
+        trigger: { event: "signup" },
+        participantType: "referee",
+        reward: { type: "cash", unit: "fixed", amount: 5, currency: "USD" },
+      },
+    });
+    const history = await (
+      await caller(eventsRouter)
+    ).create({
+      productId: ids.product,
+      programId: fixture.programId,
+      participantId: fixture.participantId,
+      eventType: "signup",
+      metadata: { schemaVersion: 1 },
+    });
+    const historicalRewards = await db
+      .select()
+      .from(schema.reward)
+      .where(eq(schema.reward.eventId, history.id));
+    const custom = await rules.create({
+      programId: fixture.programId,
+      name: "Retained exact commission",
+      type: "custom_retained_purchase",
+      config: {
+        schemaVersion: 1,
+        trigger: { event: "purchase" },
+        participantType: "referrer",
+        conditions: { firstPaidOnly: true },
+        reward: { type: "cash", unit: "fixed", amount: 0.25, currency: "RUB" },
+      },
+    });
+    const programs = await caller(programRouter);
+    await programs.saveTemplateConfiguration({
+      id: fixture.programId,
+      templateConfig: { rewardConfig: conversionTerms },
+    });
+    await programs.approveServerTracking({
+      productId: ids.product,
+      programId: fixture.programId,
+      termsFingerprint: referralTermsFingerprint(conversionTerms),
+      reviewedPeriod: { startDate: null, endDate: null },
+      calculationVersion: 1,
+      edgeExamplesApproved: true,
+      ownershipPolicyVerified: true,
+    });
+    expect(await rules.getById(custom!.id)).toEqual(custom);
+    expect(await rules.getById(welcome!.id)).toEqual(welcome);
+    expect(
+      await db
+        .select()
+        .from(schema.reward)
+        .where(eq(schema.reward.eventId, history.id)),
+    ).toEqual(historicalRewards);
+    const fixtureCode = randomBytes(4).toString("hex").slice(0, 7);
+    await db.insert(schema.refcode).values({
+      code: fixtureCode,
+      productId: ids.product,
+      programId: fixture.programId,
+      participantId: ids.referrer,
+    });
+    const resolved = await post(
+      "/v1/referrals/resolve",
+      {
+        productId: ids.product,
+        programId: fixture.programId,
+        customerExternalId: fixture.externalId,
+        code: fixtureCode,
+      },
+      await createScopedKey(ids.product, fixture.programId),
+    );
+    expect(resolved.statusCode).toBe(200);
+    const terms = referralCodeResolutionSchema.parse(resolved.json());
+    expect(terms.commission.rules).toHaveLength(2);
+    expect(
+      terms.commission.rules.find((rule) => rule.ruleId === custom!.id)?.config,
+    ).toEqual(custom!.config);
+  });
+
   it.each([
-    { transport: "api-signup", base: undefined, expected: "0.00" },
-    { transport: "api-purchase", base: 200, expected: "20.00" },
-    { transport: "web-absent", base: undefined, expected: "10.00" },
-    { transport: "web-zero", base: 0, expected: "10.00" },
-    { transport: "web-amount", base: 200, expected: "20.00" },
+    "api-signup",
+    "api-purchase",
+    "web-signup",
+    "web-purchase",
+  ] as const)(
+    "preserves signed V1 fixed and percent decimals, subcent rounding and replay through %s",
+    async (transport) => {
+      const fixture = await createLegacyRegressionFixture();
+      const rules = await caller(rewardRulesRouter);
+      const eventType = transport.endsWith("purchase") ? "purchase" : "signup";
+      const specs = [
+        {
+          name: "fixed",
+          unit: "fixed" as const,
+          amount: -1.25,
+          expected: "-1.25",
+        },
+        {
+          name: "negative-native-limit",
+          unit: "fixed" as const,
+          amount: -99999999.99,
+          expected: "-99999999.99",
+        },
+        {
+          name: "negative-half-cent",
+          unit: "fixed" as const,
+          amount: -0.005,
+          expected: "-0.01",
+        },
+        {
+          name: "negative-rounded-zero",
+          unit: "fixed" as const,
+          amount: -0.004,
+          expected: "0.00",
+        },
+        {
+          name: "negative-exponent",
+          unit: "fixed" as const,
+          amount: -1e-7,
+          expected: "0.00",
+        },
+        {
+          name: "percent-unrounded-major-base",
+          unit: "percent" as const,
+          amount: -50,
+          expected:
+            eventType === "purchase"
+              ? "-0.01"
+              : transport === "api-signup"
+                ? "0.00"
+                : "-50.00",
+        },
+        {
+          name: "percent-negative-half-cent",
+          unit: "percent" as const,
+          amount: -20,
+          expected:
+            eventType === "purchase"
+              ? "-0.01"
+              : transport === "api-signup"
+                ? "0.00"
+                : "-20.00",
+        },
+      ];
+      const expected = new Map<string, string>();
+      for (const spec of specs) {
+        const rule = await rules.create({
+          programId: fixture.programId,
+          name: spec.name,
+          type: `signed_${spec.name}`,
+          config: {
+            schemaVersion: 1,
+            trigger: { event: eventType },
+            participantType: "referee",
+            reward: {
+              type: "cash",
+              unit: spec.unit,
+              amount: spec.amount,
+              currency: "USD",
+            },
+          },
+        });
+        expected.set(rule!.id, spec.expected);
+      }
+      let eventId: string;
+      if (transport.startsWith("api-")) {
+        const response = await post(
+          `/v1/track/${eventType}`,
+          {
+            timestamp: new Date().toISOString(),
+            productId: ids.product,
+            programId: fixture.programId,
+            payload: {
+              userId: fixture.externalId,
+              ...(eventType === "purchase"
+                ? {
+                    orderId: `signed-${randomUUID()}`,
+                    orderAmount: 0.025,
+                    currency: "USD",
+                  }
+                : {}),
+            },
+          },
+          legacyKey,
+        );
+        expect(response.statusCode).toBe(200);
+        eventId = response.json().eventId;
+      } else {
+        eventId = (
+          await (
+            await caller(eventsRouter)
+          ).create({
+            productId: ids.product,
+            programId: fixture.programId,
+            participantId: fixture.participantId,
+            eventType,
+            metadata: {
+              schemaVersion: 1,
+              ...(eventType === "purchase"
+                ? {
+                    orderId: `signed-web-${randomUUID()}`,
+                    orderAmount: 0.025,
+                    currency: "USD",
+                  }
+                : {}),
+            },
+          })
+        ).id;
+      }
+      const issued = await db
+        .select()
+        .from(schema.reward)
+        .where(eq(schema.reward.eventId, eventId))
+        .orderBy(schema.reward.id);
+      expect(issued).toHaveLength(specs.length);
+      for (const row of issued) {
+        expect(row.amount).toBe(expected.get(row.rewardRuleId!));
+        expect(row).toMatchObject({
+          participantId: fixture.participantId,
+          currency: "USD",
+          rewardType: "cash",
+        });
+      }
+      const replay = await processEventForRewards(
+        db,
+        eventId,
+        transport.startsWith("api-") ? "api" : "web",
+      );
+      expect(replay.sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+        issued.sort((a, b) => a.id.localeCompare(b.id)),
+      );
+      expect(
+        (
+          await db
+            .select()
+            .from(schema.event)
+            .where(eq(schema.event.id, eventId))
+        )[0]?.status,
+      ).toBe("processed");
+    },
+  );
+
+  it.each([
+    {
+      transport: "api-signup",
+      base: undefined,
+      expected: "0.00",
+      coupons: false,
+    },
+    { transport: "api-purchase", base: 200, expected: "20.00", coupons: false },
+    {
+      transport: "web-absent",
+      base: undefined,
+      expected: "10.00",
+      coupons: true,
+    },
+    { transport: "web-zero", base: 0, expected: "10.00", coupons: true },
+    { transport: "web-amount", base: 200, expected: "20.00", coupons: true },
   ])(
     "preserves percentage-base and coupon behavior for $transport",
-    async ({ transport, base, expected }) => {
+    async ({ transport, base, expected, coupons }) => {
       const fixture = await createLegacyRegressionFixture();
       const rules = await caller(rewardRulesRouter);
       for (const type of ["cash", "discount"] as const) {
@@ -3105,6 +3592,8 @@ describe("native follow-up legacy regressions", () => {
           },
         });
       }
+      const earliestExpiry = new Date();
+      earliestExpiry.setDate(earliestExpiry.getDate() + 30);
       let eventId: string;
       if (transport.startsWith("api-")) {
         const response = await post(
@@ -3153,18 +3642,29 @@ describe("native follow-up legacy regressions", () => {
       expect(issued).toHaveLength(2);
       expect(issued.map((row) => row.amount)).toEqual([expected, expected]);
       const coupon = issued.find((row) => row.rewardType === "discount")!;
-      expect(coupon.metadata).toMatchObject({ minPurchaseAmount: 75 });
-      expect(coupon.metadata?.couponCode).toMatch(/^REF-/);
-      expect(Number.isFinite(Date.parse(coupon.metadata!.validUntil!))).toBe(
-        true,
-      );
+      if (coupons) {
+        const latestExpiry = new Date();
+        latestExpiry.setDate(latestExpiry.getDate() + 30);
+        expect(coupon.metadata).toMatchObject({ minPurchaseAmount: 50 });
+        expect(coupon.metadata?.couponCode).toMatch(/^REF-/);
+        const expiry = Date.parse(coupon.metadata!.validUntil!);
+        expect(expiry).toBeGreaterThanOrEqual(earliestExpiry.getTime());
+        expect(expiry).toBeLessThanOrEqual(latestExpiry.getTime());
+      } else {
+        for (const field of ["couponCode", "validUntil", "minPurchaseAmount"])
+          expect(coupon.metadata).not.toHaveProperty(field);
+      }
       const [storedEvent] = await db
         .select()
         .from(schema.event)
         .where(eq(schema.event.id, eventId));
       if (base === undefined)
         expect(storedEvent!.metadata).not.toHaveProperty("orderAmount");
-      const replay = await processEventForRewards(db, eventId);
+      const replay = await processEventForRewards(
+        db,
+        eventId,
+        transport.startsWith("api-") ? "api" : "web",
+      );
       expect(replay.map((row) => row.id).sort()).toEqual(
         issued.map((row) => row.id).sort(),
       );
@@ -3174,9 +3674,13 @@ describe("native follow-up legacy regressions", () => {
     },
   );
 
-  it.each(["api", "web"] as const)(
-    "marks a durably inserted legacy event failed after an accepted overflowing rule rejects through %s",
-    async (transport) => {
+  it.each(
+    (["api", "web"] as const).flatMap((transport) =>
+      [100000000, -100000000].map((amount) => ({ transport, amount })),
+    ),
+  )(
+    "marks a durably inserted legacy event failed after accepted overflow $amount rejects through $transport",
+    async ({ transport, amount }) => {
       const fixture = await createLegacyRegressionFixture();
       const rule = await (
         await caller(rewardRulesRouter)
@@ -3191,12 +3695,12 @@ describe("native follow-up legacy regressions", () => {
           reward: {
             type: "cash",
             unit: "fixed",
-            amount: 100000000,
+            amount,
             currency: "USD",
           },
         },
       });
-      expect(rule!.config.reward.amount).toBe(100000000);
+      expect(rule!.config.reward.amount).toBe(amount);
       if (transport === "api") {
         const response = await post(
           "/v1/track/signup",
@@ -3317,10 +3821,6 @@ describe("native follow-up legacy regressions", () => {
       ownerUserId: identity.memberIdentity.userId,
       evidence: `legacy-fulfillment-owner-${randomUUID()}`,
       externalOwnershipVerified: true,
-      recipient: {
-        name: "Legacy recipient",
-        details: "Synthetic recipient account",
-      },
     });
     const discount = rewardRows.find((row) => row.rewardType === "discount")!;
     const cash = rewardRows.find((row) => row.rewardType === "cash")!;
@@ -3470,6 +3970,269 @@ describe("native follow-up legacy regressions", () => {
 });
 
 describe("native follow-up own-wallet regressions", () => {
+  it.each(["native-approval", "already-approved-history"] as const)(
+    "preserves signed legacy cash debt through balances, own portal and approval transitions (%s)",
+    async (entry) => {
+      const identity = await createProductScopeFixture();
+      const fixture = await createLegacyRegressionFixture();
+      await (
+        await caller(payoutsRouter)
+      ).verifyOwnership({
+        productId: ids.product,
+        participantId: fixture.participantId,
+        ownerUserId: identity.memberIdentity.userId,
+        evidence: `signed-ledger-owner-${randomUUID()}`,
+        externalOwnershipVerified: true,
+      });
+      const rule = await (
+        await caller(rewardRulesRouter)
+      ).create({
+        programId: fixture.programId,
+        name: "Signed legacy ledger cash",
+        type: "signed_legacy_ledger",
+        config: {
+          schemaVersion: 1,
+          trigger: { event: "signup" },
+          participantType: "referee",
+          reward: {
+            type: "cash",
+            unit: "fixed",
+            amount: -1.25,
+            currency: "USD",
+          },
+        },
+      });
+      const event = await (
+        await caller(eventsRouter)
+      ).create({
+        productId: ids.product,
+        programId: fixture.programId,
+        participantId: fixture.participantId,
+        eventType: "signup",
+        metadata: { schemaVersion: 1 },
+      });
+      const [reward] = await db
+        .select()
+        .from(schema.reward)
+        .where(eq(schema.reward.eventId, event.id));
+      expect(reward).toMatchObject({
+        amount: "-1.25",
+        status: "pending_disbursal",
+        rewardRuleId: rule!.id,
+      });
+      const rewards = await caller(rewardsRouter);
+      if (entry === "already-approved-history")
+        await db
+          .update(schema.reward)
+          .set({ status: "approved" })
+          .where(eq(schema.reward.id, reward!.id));
+      else
+        expect(
+          await rewards.updateApprovalStatus({
+            productId: ids.product,
+            rewardId: reward!.id,
+            status: "approved",
+          }),
+        ).toMatchObject({
+          success: true,
+          reward: { id: reward!.id, amount: "-1.25", status: "approved" },
+        });
+      const expectedDebt = {
+        currency: "USD",
+        eligibleMinor: -125,
+        reservedMinor: 0,
+        completedMinor: 0,
+        availableMinor: -125,
+      };
+      expect(
+        (
+          await participantBalances(db, ids.product, fixture.participantId, [
+            "USD",
+          ])
+        )[0],
+      ).toEqual(expectedDebt);
+      const portal = await caller(
+        participantPortalRouter,
+        identity.memberHeaders,
+      );
+      const ownScope = {
+        userId: identity.memberIdentity.userId,
+        productId: ids.product,
+      };
+      expect(
+        (await portal.summary(ownScope)).balances.find(
+          (balance) => balance.currency === "USD",
+        ),
+      ).toEqual(expectedDebt);
+      const history = await portal.history({
+        ...ownScope,
+        page: 1,
+        pageSize: 20,
+      });
+      expect(history.rewards).toMatchObject([
+        {
+          id: reward!.id,
+          eventId: event.id,
+          amount: "-1.25",
+          status: "approved",
+        },
+      ]);
+      const before = await businessCounts(ids.product);
+      await expect(
+        portal.requestPayout({
+          recipient: {
+            name: "Fixture recipient",
+            details: "Synthetic transfer account",
+          },
+          ...ownScope,
+          currency: "USD",
+          amountMinor: 1,
+          idempotencyKey: `signed-debt-${randomUUID()}`,
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(await businessCounts(ids.product)).toEqual(before);
+      expect(
+        (await portal.history({ ...ownScope, page: 1, pageSize: 20 })).payouts,
+      ).toEqual([]);
+      for (const status of [
+        "pending_disbursal",
+        "approved",
+        "rejected",
+        "approved",
+      ] as const) {
+        expect(
+          await rewards.updateApprovalStatus({
+            productId: ids.product,
+            rewardId: reward!.id,
+            status,
+          }),
+        ).toMatchObject({
+          reward: {
+            id: reward!.id,
+            eventId: event.id,
+            amount: "-1.25",
+            status,
+          },
+        });
+        expect(
+          (await portal.summary(ownScope)).balances.find(
+            (balance) => balance.currency === "USD",
+          ),
+        ).toEqual({
+          ...expectedDebt,
+          eligibleMinor: status === "approved" ? -125 : 0,
+          availableMinor: status === "approved" ? -125 : 0,
+        });
+      }
+      expect(await processEventForRewards(db, event.id, "web")).toMatchObject([
+        {
+          id: reward!.id,
+          eventId: event.id,
+          rewardRuleId: rule!.id,
+          amount: "-1.25",
+          status: "approved",
+        },
+      ]);
+    },
+  );
+
+  it.each(["requested", "completed"] as const)(
+    "blocks signed legacy approval and positive reward removal from underfunding %s payouts",
+    async (obligation) => {
+      const identity = await createProductScopeFixture();
+      const fixture = await createLegacyRegressionFixture();
+      const payouts = await caller(payoutsRouter);
+      await payouts.verifyOwnership({
+        productId: ids.product,
+        participantId: fixture.participantId,
+        ownerUserId: identity.memberIdentity.userId,
+        evidence: `signed-obligation-${randomUUID()}`,
+        externalOwnershipVerified: true,
+      });
+      const [positive, negative] = await db
+        .insert(schema.reward)
+        .values([
+          {
+            participantId: fixture.participantId,
+            programId: fixture.programId,
+            rewardType: "cash",
+            amount: "2.00",
+            currency: "USD",
+            status: "approved",
+          },
+          {
+            participantId: fixture.participantId,
+            programId: fixture.programId,
+            rewardType: "cash",
+            amount: "-1.25",
+            currency: "USD",
+            status: "pending_disbursal",
+          },
+        ])
+        .returning();
+      const portal = await caller(
+        participantPortalRouter,
+        identity.memberHeaders,
+      );
+      const ownScope = {
+        userId: identity.memberIdentity.userId,
+        productId: ids.product,
+      };
+      const payout = await portal.requestPayout({
+        recipient: {
+          name: "Fixture recipient",
+          details: "Synthetic transfer account",
+        },
+        ...ownScope,
+        currency: "USD",
+        amountMinor: 100,
+        idempotencyKey: `signed-obligation-payout-${randomUUID()}`,
+      });
+      if (obligation === "completed") {
+        await payouts.claim({ productId: ids.product, payoutId: payout.id });
+        await payouts.confirmPaid({
+          productId: ids.product,
+          payoutId: payout.id,
+          amountMinor: 100,
+          currency: "USD",
+          externalReference: `synthetic-signed-obligation-${randomUUID()}`,
+          completedAt: new Date().toISOString(),
+          idempotencyKey: `signed-obligation-confirm-${randomUUID()}`,
+          paymentAndNoRefundVerified: true,
+        });
+      }
+      const before = await portal.summary(ownScope);
+      const history = await portal.history({
+        ...ownScope,
+        page: 1,
+        pageSize: 20,
+      });
+      const rewards = await caller(rewardsRouter);
+      for (const change of [
+        { rewardId: negative!.id, status: "approved" as const },
+        { rewardId: positive!.id, status: "rejected" as const },
+        { rewardId: positive!.id, status: "pending_disbursal" as const },
+      ]) {
+        await expect(
+          rewards.updateApprovalStatus({ productId: ids.product, ...change }),
+        ).rejects.toMatchObject({ code: "CONFLICT" });
+        expect(await portal.summary(ownScope)).toEqual(before);
+        expect(
+          await portal.history({ ...ownScope, page: 1, pageSize: 20 }),
+        ).toEqual(history);
+      }
+      expect(
+        before.balances.find((balance) => balance.currency === "USD"),
+      ).toEqual({
+        currency: "USD",
+        eligibleMinor: 200,
+        availableMinor: 100,
+        reservedMinor: obligation === "requested" ? 100 : 0,
+        completedMinor: obligation === "completed" ? 100 : 0,
+      });
+    },
+  );
+
   it("keeps verified own portal and payout access after native removal leaves a stale unrelated active organization", async () => {
     const identity = await createProductScopeFixture();
     const fixture = await createLegacyRegressionFixture();
@@ -3481,10 +4244,6 @@ describe("native follow-up own-wallet regressions", () => {
       ownerUserId: identity.memberIdentity.userId,
       evidence: `removed-member-ownership-${randomUUID()}`,
       externalOwnershipVerified: true,
-      recipient: {
-        name: "Removed member recipient",
-        details: "Synthetic recipient account",
-      },
     });
     await db.insert(schema.reward).values({
       participantId: fixture.participantId,
@@ -3540,6 +4299,10 @@ describe("native follow-up own-wallet regressions", () => {
       )!,
     ).toMatchObject({ eligibleMinor: 325, availableMinor: 325 });
     const payout = await portal.requestPayout({
+      recipient: {
+        name: "Fixture recipient",
+        details: "Synthetic transfer account",
+      },
       ...ownScope,
       currency: "USD",
       amountMinor: 125,
@@ -3611,10 +4374,6 @@ describe("native follow-up own-wallet regressions", () => {
       ownerUserId: fixture.identity.userId,
       evidence: `grouped-balance-ownership-${randomUUID()}`,
       externalOwnershipVerified: true,
-      recipient: {
-        name: "Currency owner",
-        details: "Synthetic multi-currency recipient",
-      },
     });
     await db.insert(schema.reward).values([
       {
@@ -3718,6 +4477,10 @@ describe("native follow-up own-wallet regressions", () => {
       amountMinor: number,
     ) =>
       portal.requestPayout({
+        recipient: {
+          name: "Fixture recipient",
+          details: "Synthetic transfer account",
+        },
         ...scope,
         currency,
         amountMinor,
@@ -3896,6 +4659,7 @@ describe("native explicit product scope acceptance", () => {
           productId: fixture.targetProduct.id,
           programId: created.id,
           termsFingerprint: referralTermsFingerprint(rewardConfig),
+          reviewedPeriod: { startDate: null, endDate: null },
           calculationVersion: 1,
           edgeExamplesApproved: true,
           ownershipPolicyVerified: true,
@@ -4359,6 +5123,7 @@ describe("native explicit product scope acceptance", () => {
           productId: fixture.targetProduct.id,
           programId: fixture.programs.alpha,
           termsFingerprint: referralTermsFingerprint(initialTerms),
+          reviewedPeriod: { startDate: null, endDate: null },
           calculationVersion: 1,
           edgeExamplesApproved: true,
           ownershipPolicyVerified: true,
@@ -4724,4 +5489,485 @@ describe("native explicit product scope acceptance", () => {
       }),
     ).toEqual(accepted);
   });
+});
+
+describe("native RefRef-only referrer enrollment", () => {
+  const personId = `rf-person-${randomUUID()}`;
+  const otherPersonId = `rf-person-${randomUUID()}`;
+  const unverifiedId = `rf-unverified-${randomUUID()}`;
+  const serviceId = `rf-service-${randomUUID()}`;
+  const foreignProgramId = `rf-foreign-program-${randomUUID()}`;
+  const email = `${randomUUID()}@example.test`;
+  const proof = {
+    ownerUserId: personId,
+    evidence: `independent-ownership-check-${randomUUID()}`,
+    externalOwnershipVerified: true as const,
+  };
+  let fixture: { programId: string; apiKey: string };
+  let personHeaders: Headers;
+
+  beforeAll(async () => {
+    await db.insert(schema.user).values([
+      { id: personId, name: "RefRef-only person", email, emailVerified: true },
+      {
+        id: otherPersonId,
+        name: "Other person",
+        email: `${randomUUID()}@example.test`,
+        emailVerified: true,
+      },
+      {
+        id: unverifiedId,
+        name: "Unverified person",
+        email: `${randomUUID()}@example.test`,
+        emailVerified: false,
+      },
+      {
+        id: serviceId,
+        name: "Service identity",
+        email: `${randomUUID()}@example.test`,
+        emailVerified: true,
+        role: "service",
+      },
+    ]);
+    await db.insert(schema.account).values({
+      userId: personId,
+      accountId: personId,
+      providerId: "credential",
+      password: await hashPassword("Test-first-payment-password-123!"),
+    });
+    personHeaders = await signIn(email);
+    fixture = await createFinancialFixture();
+    await db.insert(schema.program).values({
+      id: foreignProgramId,
+      productId: ids.foreignProduct,
+      name: "Foreign enrollment program",
+      status: "active",
+      programTemplateId: "single-sided",
+    });
+  });
+
+  it("enrolls once without org/backend membership or disclosure of the global account profile", async () => {
+    const admin = await caller(payoutsRouter);
+    const input = {
+      ...proof,
+      productId: ids.product,
+      programId: fixture.programId,
+    };
+    const [first, concurrent] = await Promise.all([
+      admin.enrollReferrer(input),
+      admin.enrollReferrer(input),
+    ]);
+    expect(concurrent).toEqual(first);
+    const participants = await db
+      .select()
+      .from(schema.participant)
+      .where(
+        and(
+          eq(schema.participant.productId, ids.product),
+          eq(schema.participant.ownerUserId, personId),
+        ),
+      );
+    expect(participants).toHaveLength(1);
+    expect(participants[0]).toMatchObject({
+      id: first.participantId,
+      externalId: personId,
+      name: null,
+      email: null,
+      ownershipVerifiedBy: ids.admin,
+      ownershipEvidence: proof.evidence,
+      payoutRecipient: null,
+    });
+    expect(
+      await db
+        .select()
+        .from(schema.orgUser)
+        .where(eq(schema.orgUser.userId, personId)),
+    ).toHaveLength(0);
+    const codes = await db
+      .select()
+      .from(schema.refcode)
+      .where(
+        and(
+          eq(schema.refcode.participantId, first.participantId),
+          eq(schema.refcode.programId, fixture.programId),
+        ),
+      );
+    expect(codes).toHaveLength(1);
+    expect(codes[0]).toMatchObject({
+      id: first.codeId,
+      code: first.code,
+      productId: ids.product,
+    });
+    const portal = await caller(participantPortalRouter, personHeaders);
+    expect(await portal.memberships({ userId: personId })).toEqual([
+      { productId: ids.product, productName: expect.any(String) },
+    ]);
+    const summary = await portal.summary({
+      userId: personId,
+      productId: ids.product,
+    });
+    expect(summary.codes).toMatchObject([
+      {
+        codeId: first.codeId,
+        code: first.code,
+        programId: fixture.programId,
+        programName: "Concurrent approved terms",
+        programStatus: "active",
+        isActive: true,
+      },
+    ]);
+    expect(
+      summary.balances.every((balance) => balance.availableMinor === 0),
+    ).toBe(true);
+    const resolution = await post(
+      "/v1/referrals/resolve",
+      {
+        productId: ids.product,
+        programId: fixture.programId,
+        customerExternalId: randomUUID(),
+        code: first.code,
+      },
+      fixture.apiKey,
+    );
+    expect(resolution.statusCode).toBe(200);
+    expect(resolution.json()).toMatchObject({
+      codeId: first.codeId,
+      referrerParticipantId: first.participantId,
+    });
+    await expect(
+      portal.summary({ userId: ids.admin, productId: ids.product }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      portal.summary({ userId: personId, productId: ids.foreignProduct }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("preserves existing ownership checks, prevents reassignment and reuses that person for another program", async () => {
+    const admin = await caller(payoutsRouter);
+    const enrolled = await admin.enrollReferrer({
+      ...proof,
+      productId: ids.product,
+      programId: fixture.programId,
+    });
+    expect(
+      await admin.verifyOwnership({
+        ...proof,
+        productId: ids.product,
+        participantId: enrolled.participantId,
+      }),
+    ).toMatchObject({
+      participantId: enrolled.participantId,
+      verified: true,
+    });
+    await expect(
+      admin.enrollReferrer({
+        ...proof,
+        evidence: `different-evidence-${randomUUID()}`,
+        productId: ids.product,
+        programId: fixture.programId,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      admin.verifyOwnership({
+        ...proof,
+        productId: ids.product,
+        participantId: enrolled.participantId,
+        ownerUserId: otherPersonId,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const second = await createFinancialFixture();
+    const secondEnrollment = await admin.enrollReferrer({
+      ...proof,
+      productId: ids.product,
+      programId: second.programId,
+    });
+    expect(secondEnrollment.participantId).toBe(enrolled.participantId);
+    expect(secondEnrollment.codeId).not.toBe(enrolled.codeId);
+    await db
+      .update(schema.refcode)
+      .set({ isActive: false })
+      .where(eq(schema.refcode.id, secondEnrollment.codeId));
+    expect(
+      await admin.enrollReferrer({
+        ...proof,
+        productId: ids.product,
+        programId: second.programId,
+      }),
+    ).toMatchObject({ codeId: secondEnrollment.codeId });
+    const summary = await (
+      await caller(participantPortalRouter, personHeaders)
+    ).summary({
+      userId: personId,
+      productId: ids.product,
+    });
+    expect(summary.codes.map((code) => code.programId).sort()).toEqual(
+      [fixture.programId, second.programId].sort(),
+    );
+    expect(
+      summary.codes.find((code) => code.codeId === secondEnrollment.codeId)
+        ?.isActive,
+    ).toBe(false);
+  });
+
+  it("rejects nonadmins, mixed scopes and unverified/service identities without enrollment writes", async () => {
+    const admin = await caller(payoutsRouter);
+    const input = {
+      ...proof,
+      productId: ids.product,
+      programId: fixture.programId,
+    };
+    const [unlinked] = await db
+      .insert(schema.participant)
+      .values({
+        productId: ids.product,
+        externalId: otherPersonId,
+        name: "Existing unlinked customer",
+      })
+      .returning();
+    const before = await businessCounts(ids.product);
+    for (const headers of [memberHeaders, outsiderHeaders, personHeaders]) {
+      await expect(
+        (await caller(payoutsRouter, headers)).enrollReferrer(input),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    for (const ownerUserId of [
+      unverifiedId,
+      serviceId,
+      `missing-${randomUUID()}`,
+    ]) {
+      await expect(
+        admin.enrollReferrer({ ...input, ownerUserId }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    await expect(
+      admin.enrollReferrer({ ...input, productId: ids.foreignProduct }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      admin.enrollReferrer({ ...input, programId: foreignProgramId }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      admin.enrollReferrer({ ...input, programId: `missing-${randomUUID()}` }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      admin.enrollReferrer({ ...input, ownerUserId: otherPersonId }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(
+      await db.query.participant.findFirst({
+        where: eq(schema.participant.id, unlinked!.id),
+      }),
+    ).toMatchObject({
+      ownerUserId: null,
+      name: "Existing unlinked customer",
+    });
+    expect(await businessCounts(ids.product)).toEqual(before);
+    expect(
+      await db
+        .select()
+        .from(schema.participant)
+        .where(eq(schema.participant.ownerUserId, otherPersonId)),
+    ).toHaveLength(0);
+  });
+});
+
+describe("current administrator eligibility", () => {
+  it.each([{ banned: true }, { emailVerified: false }, { role: "service" }])(
+    "rejects an existing session after the administrator becomes ineligible: %j",
+    async (change) => {
+      const fixture = await createFinancialFixture();
+      const admin = await caller(programRouter);
+      const settings = await admin.partnerRules({
+        id: fixture.programId,
+        scope: adminIdentity,
+      });
+      const input = {
+        productId: ids.product,
+        programId: fixture.programId,
+        enabled: false,
+      };
+      const [before] = await db
+        .select()
+        .from(schema.program)
+        .where(eq(schema.program.id, fixture.programId));
+      await db
+        .update(schema.user)
+        .set(change)
+        .where(eq(schema.user.id, ids.admin));
+      try {
+        await expect(admin.setPartnerSelfService(input)).rejects.toMatchObject({
+          code: "FORBIDDEN",
+        });
+        await expect(
+          admin.getById({ id: fixture.programId, scope: adminIdentity }),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(
+          admin.publishPartnerRules({
+            productId: ids.product,
+            programId: fixture.programId,
+            body: "Reviewed independent programme rules. Only eligible confirmed first purchases earn rewards. Recipients supply their own truthful transfer details. Approved available earnings can be requested in RefRef and are paid manually under the published conditions.",
+            termsFingerprint: settings.termsFingerprint!,
+            confirmReviewedRules: true,
+          }),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        const [after] = await db
+          .select()
+          .from(schema.program)
+          .where(eq(schema.program.id, fixture.programId));
+        expect(after).toEqual(before);
+      } finally {
+        await db
+          .update(schema.user)
+          .set({ banned: false, emailVerified: true, role: "user" })
+          .where(eq(schema.user.id, ids.admin));
+      }
+    },
+  );
+});
+
+it("self-enrolls an independent native session and rejects forged owner, product and code scopes", async () => {
+  const fixture = await createFinancialFixture();
+  const admin = await caller(programRouter);
+  const settings = await admin.partnerRules({
+    id: fixture.programId,
+    scope: adminIdentity,
+  });
+  const body =
+    "Independent programme rules for suitable self-employed professionals and businesses. Only qualifying confirmed purchases generate pending commission; approved available balances may be withdrawn. Recipients supply their own truthful details; transfers are completed manually under these published conditions.";
+  const published = await admin.publishPartnerRules({
+    productId: ids.product,
+    programId: fixture.programId,
+    body,
+    termsFingerprint: settings.termsFingerprint!,
+    confirmReviewedRules: true,
+  });
+  await admin.setPartnerSelfService({
+    productId: ids.product,
+    programId: fixture.programId,
+    enabled: true,
+  });
+  const person = randomUUID();
+  const email = `${person}@example.test`;
+  await db.insert(schema.user).values({
+    id: person,
+    name: "Independent native session",
+    email,
+    emailVerified: true,
+  });
+  await db.insert(schema.account).values({
+    userId: person,
+    accountId: person,
+    providerId: "credential",
+    password: await hashPassword("Test-first-payment-password-123!"),
+  });
+  const portal = await caller(participantPortalRouter, await signIn(email));
+  const scope = { userId: person, programId: fixture.programId };
+  const displayed = await portal.participation(scope);
+  expect(displayed).toMatchObject({
+    state: "join",
+    rules: {
+      id: published.id,
+      body,
+      commission: settings.economics!.commission,
+    },
+  });
+  await expect(
+    portal.participation({ ...scope, userId: ids.admin }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(
+    (await caller(participantPortalRouter, new Headers())).participation(scope),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const chosen = `PARTNER${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const input = {
+    ...scope,
+    code: ` ${chosen} `,
+    termsId: published.id,
+    acceptRules: true as const,
+  };
+  const [joined, retry] = await Promise.all([
+    portal.join(input),
+    portal.join(input),
+  ]);
+  expect(retry).toEqual(joined);
+  expect(joined.code).toBe(chosen.toLowerCase());
+  const summary = await portal.summary({
+    userId: person,
+    productId: ids.product,
+  });
+  expect(summary.recipient).toBeNull();
+  expect(summary.codes.map((code) => code.codeId)).toEqual([joined.codeId]);
+  expect(summary.acceptedRules).toMatchObject([
+    { programId: fixture.programId, termsId: published.id },
+  ]);
+  expect(
+    await db
+      .select()
+      .from(schema.orgUser)
+      .where(eq(schema.orgUser.userId, person)),
+  ).toEqual([]);
+  await expect(
+    portal.codeStats({
+      userId: person,
+      productId: ids.foreignProduct,
+      from: new Date(Date.now() - 86400000),
+      to: new Date(),
+    }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  const [foreign] = await db
+    .select()
+    .from(schema.refcode)
+    .where(eq(schema.refcode.code, fixture.code));
+  await expect(
+    portal.setCodeActive({
+      userId: person,
+      productId: ids.product,
+      codeId: foreign!.id,
+      isActive: false,
+    }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(
+    (
+      await db
+        .select()
+        .from(schema.refcode)
+        .where(eq(schema.refcode.id, foreign!.id))
+    )[0]!.isActive,
+  ).toBe(true);
+  await expect(
+    (await caller(programRouter, memberHeaders)).publishPartnerRules({
+      productId: ids.product,
+      programId: fixture.programId,
+      body,
+      termsFingerprint: settings.termsFingerprint!,
+      confirmReviewedRules: true,
+    }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(
+    (await caller(programRouter, outsiderHeaders)).setPartnerSelfService({
+      productId: ids.product,
+      programId: fixture.programId,
+      enabled: false,
+    }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(
+    db
+      .update(schema.programTerms)
+      .set({ body: `${body} Tampered.` })
+      .where(eq(schema.programTerms.id, published.id)),
+  ).rejects.toThrow();
+  expect(
+    (
+      await db
+        .select()
+        .from(schema.programTerms)
+        .where(eq(schema.programTerms.id, published.id))
+    )[0]!.body,
+  ).toBe(body);
+  await expect(
+    db
+      .delete(schema.programAcceptance)
+      .where(eq(schema.programAcceptance.termsId, published.id)),
+  ).rejects.toThrow();
+  expect(
+    (await portal.summary({ userId: person, productId: ids.product }))
+      .acceptedRules,
+  ).toMatchObject([{ termsId: published.id }]);
 });

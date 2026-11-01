@@ -56,7 +56,7 @@ export const ProductInfoStep = withFieldGroup({
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold">Tell us about your product</h2>
           <p className="text-muted-foreground">
-            We'll use this information to tailor your setup process
+            We&apos;ll use this information to tailor your setup process
           </p>
         </div>
 

@@ -10,7 +10,7 @@ export default function OrganizationAPIKeysPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage API keys for accessing your organization's data
+          Manage API keys for accessing your organization&apos;s data
           programmatically
         </p>
       </div>

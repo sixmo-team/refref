@@ -9,7 +9,7 @@
 
 import { createDb } from "../src/index";
 import { eq, like, and } from "drizzle-orm";
-import { apikey, user, org, orgUser } from "../src/schema";
+import { apikey, user, org } from "../src/schema";
 import { ensureServiceAccountForOrganization } from "../src/lib/organization-service-account";
 
 async function main() {
@@ -70,7 +70,7 @@ async function main() {
 
     for (const organization of organizations) {
       try {
-        const serviceAccountId = await ensureServiceAccountForOrganization(
+        await ensureServiceAccountForOrganization(
           db,
           organization.id,
         );

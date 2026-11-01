@@ -19,15 +19,9 @@ import { ProductInfoStep } from "@/components/onboarding/product-info-step";
 import { AppTypeStep } from "@/components/onboarding/app-type-step";
 import { PaymentProviderStep } from "@/components/onboarding/payment-provider-step";
 import { UseCaseStep } from "@/components/onboarding/use-case-step";
-import {
-  OnboardingFormValues,
-  useOnboardingForm,
-} from "@/lib/forms/onboarding-form";
+import { useOnboardingForm } from "@/lib/forms/onboarding-form";
 import { onboardingSchema } from "@/lib/validations/onboarding";
 import z from "zod";
-import { appTypes } from "@/lib/validations/onboarding";
-import { useCases } from "@/lib/validations/onboarding";
-import { paymentProviders } from "@/lib/validations/onboarding";
 
 const steps = [
   {
@@ -157,6 +151,13 @@ export default function OnboardingPage() {
       {/* Main content */}
       <main className="flex-1 p-6">
         <div className="max-w-4xl mx-auto space-y-8">
+          <p>
+            Here to refer buyers rather than set up a product?{" "}
+            <a href="/participant-portal" className="underline">
+              Open my referral codes and earnings
+            </a>
+            . No product or AI-marketer account is required.
+          </p>
           {/* Horizontal Stepper with Labels */}
           <Stepper
             value={currentStep}

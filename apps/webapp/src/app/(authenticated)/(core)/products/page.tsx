@@ -12,10 +12,9 @@ import {
 } from "@refref/ui/components/dialog";
 import { Input } from "@refref/ui/components/input";
 import { Label } from "@refref/ui/components/label";
-import { Textarea } from "@refref/ui/components/textarea";
 import { api } from "@/trpc/react";
+import type { schema } from "@/server/db";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { MoreVertical, Plus, Settings, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@refref/ui/components/card";
 import { Badge } from "@refref/ui/components/badge";
@@ -39,16 +38,16 @@ import {
 } from "@refref/ui/components/alert-dialog";
 
 export default function ProductsPage() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
-  const utils = api.useUtils();
 
   // const { data: products, isLoading } = api.product.getAll.useQuery();
-  const products: any[] = [];
+  const products: (typeof schema.product.$inferSelect & {
+    clientId?: string | null;
+    clientSecret?: string | null;
+  })[] = [];
   const isLoading = false;
   const createProduct = api.product.create.useMutation({
     onSuccess: () => {
@@ -65,7 +64,7 @@ export default function ProductsPage() {
   //   },
   // });
   const deleteProduct = {
-    mutate: (data: any) => {
+    mutate: (data: { id: string }) => {
       console.log("Delete not implemented", data);
     },
     isPending: false,
@@ -151,7 +150,7 @@ export default function ProductsPage() {
                         <DialogHeader>
                           <DialogTitle>Product Settings</DialogTitle>
                           <DialogDescription>
-                            View your product's client ID and secret for JWT
+                            View your product&apos;s client ID and secret for JWT
                             generation.
                           </DialogDescription>
                         </DialogHeader>

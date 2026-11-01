@@ -8,7 +8,6 @@ import {
   Participant,
 } from "./participants-table-columns";
 import { DataTable } from "@refref/ui/components/data-table/data-table";
-import { DataTableToolbar } from "@refref/ui/components/data-table/data-table-toolbar";
 import {
   useReactTable,
   getCoreRowModel,
@@ -16,7 +15,6 @@ import {
   getSortedRowModel,
   SortingState,
 } from "@tanstack/react-table";
-import { Input } from "@refref/ui/components/input";
 import { Skeleton } from "@refref/ui/components/skeleton";
 import { DataTableFilterMenu } from "@refref/ui/components/data-table/data-table-filter-menu";
 import { DataTableSortList } from "@refref/ui/components/data-table/data-table-sort-list";

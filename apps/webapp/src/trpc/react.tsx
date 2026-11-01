@@ -8,16 +8,20 @@ import { useState } from "react";
 import SuperJSON from "superjson";
 
 import { type AppRouter } from "@/server/api/root";
+import { useSession } from "@/lib/auth-client";
 import { createQueryClient } from "./query-client";
 
-let clientQueryClientSingleton: QueryClient | undefined = undefined;
-const getQueryClient = () => {
+let clientQueryClientSingleton:
+  { scope: string; client: QueryClient } | undefined;
+const getQueryClient = (scope: string) => {
   if (typeof window === "undefined") {
     // Server: always make a new query client
     return createQueryClient();
   }
-  // Browser: use singleton pattern to keep the same query client
-  return (clientQueryClientSingleton ??= createQueryClient());
+  // Retain one browser client across initial Suspense retries, never across owners.
+  if (clientQueryClientSingleton?.scope !== scope)
+    clientQueryClientSingleton = { scope, client: createQueryClient() };
+  return clientQueryClientSingleton.client;
 };
 
 export const api = createTRPCReact<AppRouter>() as ReturnType<
@@ -39,8 +43,25 @@ export type RouterInputs = inferRouterInputs<AppRouter>;
 export type RouterOutputs = inferRouterOutputs<AppRouter>;
 
 export function TRPCReactProvider(props: { children: React.ReactNode }) {
-  const queryClient = getQueryClient();
+  const session = useSession();
+  const scope = JSON.stringify([
+    session.data?.user.id ?? null,
+    session.data?.session.activeOrganizationId ?? null,
+  ]);
+  return (
+    <ScopedTRPCReactProvider key={scope} queryClient={getQueryClient(scope)}>
+      {props.children}
+    </ScopedTRPCReactProvider>
+  );
+}
 
+function ScopedTRPCReactProvider({
+  children,
+  queryClient,
+}: {
+  children: React.ReactNode;
+  queryClient: QueryClient;
+}) {
   const [trpcClient] = useState(() =>
     api.createClient({
       links: [
@@ -61,7 +82,7 @@ export function TRPCReactProvider(props: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <api.Provider client={trpcClient} queryClient={queryClient}>
-        {props.children}
+        {children}
       </api.Provider>
     </QueryClientProvider>
   );

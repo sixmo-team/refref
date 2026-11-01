@@ -1,0 +1,1 @@
+ALTER TABLE "program_terms" ADD COLUMN "commission" jsonb NOT NULL;

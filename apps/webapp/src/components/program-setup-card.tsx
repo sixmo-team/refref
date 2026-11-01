@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";

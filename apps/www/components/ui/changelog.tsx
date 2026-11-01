@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { SubscriptionForm } from "@/components/ui/subscription-form";
+import Image from "next/image";
 export type ChangelogEntry = {
   version: string;
   date: string;
@@ -69,10 +70,13 @@ const Changelog = ({
                   </ul>
                 )}
                 {entry.image && (
-                  <img
+                  <Image
                     src={entry.image}
                     alt={`${entry.version} visual`}
-                    className="mt-8 w-full rounded-lg object-cover"
+                    width={1200}
+                    height={600}
+                    unoptimized
+                    className="mt-8 h-auto w-full rounded-lg object-cover"
                   />
                 )}
               </div>
@@ -102,6 +106,14 @@ export const defaultChangelogData: ChangelogEntry[] = [
       "Forward the manual execution namespace through native Turbo runtime environment handling, without weakening scoped financial approval.",
       "Encapsulate template validation, form mapping and rule capabilities in the existing static registry; keep first-paid versus recurring policy programme-specific.",
       "Support independently enabled buyer-only discounts with explicit currency and no synthetic cash reward; promoters need only a verified RefRef identity, not an AI-marketer account.",
+      "Add administrator-assisted RefRef-account enrollment and own program-code display without backend membership, SQL fixtures or email-based ownership matching.",
+      "Scope the browser query-client lifecycle to session user/organization, including logout and late responses, while preserving same-session drafts and initial Suspense loads.",
+      "Preserve original V1 API/web coupon policies explicitly, and keep global RefRef profile PII out of administrator-assisted program enrollment.",
+      "Preserve signed V1 cash and debt balances without weakening V2 amounts or payout backing; reject incompatible custom commission conversion before activation.",
+      "Separate cold static loading from authenticated gateway quotas while retaining rate/connection limits and a native regression check.",
+      "Use native Better Auth expiry options and mutation/error handling for scoped key setup, with visible settings feedback and accurate key-scope/accessibility labels.",
+      "Patch native fast-uri normalization within existing 3.x/4.x branches after an actual encoded-scheme reproduction; keep unrelated dependency versions unchanged.",
+      "Align the builder heap with the existing 2 GiB bounded mode without increasing hard controller or runtime resource limits.",
     ],
   },
   {

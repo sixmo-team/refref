@@ -55,7 +55,7 @@ interface RewardStepProps {
 export const RewardStep = forwardRef<
   { submitForm: () => Promise<RewardStepData> },
   RewardStepProps
->(({ programId }, ref) => {
+>((_props, ref) => {
   const form = useForm<RewardStepData>({
     resolver: standardSchemaResolver(rewardStepSchema),
     defaultValues: {

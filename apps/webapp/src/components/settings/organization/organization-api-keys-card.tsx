@@ -10,7 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@refref/ui/components/card";
-import { Key, Plus, Trash2, KeyRound } from "lucide-react";
+import { Key, Plus, KeyRound } from "lucide-react";
 import { CreateOrgApiKeyDialog } from "./create-org-api-key-dialog";
 import { toast } from "sonner";
 import {
@@ -71,9 +71,9 @@ export function OrganizationApiKeysCard() {
                 API Keys
               </CardTitle>
               <CardDescription>
-                Manage API keys for authenticating API requests to your
-                organization. These keys have full access to all products and
-                programs in your organization.
+                General keys can access your organization&apos;s products and
+                programs. Dedicated first-payment keys are restricted to the
+                explicitly selected product and program.
               </CardDescription>
             </div>
             <Button onClick={() => setIsCreateDialogOpen(true)} size="sm">

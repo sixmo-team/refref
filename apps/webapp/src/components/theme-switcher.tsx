@@ -14,7 +14,7 @@ import { Button } from "@refref/ui/components/button";
 
 export function ThemeSwitcher() {
   const [mounted, setMounted] = useState(false);
-  const { theme, setTheme } = useTheme();
+  const { setTheme } = useTheme();
 
   // Only render after mounting to avoid hydration mismatch
   useEffect(() => {

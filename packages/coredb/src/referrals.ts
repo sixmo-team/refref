@@ -8,11 +8,15 @@ import {
   referralCodeResolutionSchema,
   minorPurchaseRequestSchema,
   minorPurchaseResponseSchema,
+  frozenCommissionSchema,
+  type FrozenCommission,
+  type CurrencyType,
   decimalToMinor,
   templateRequiresVerifiedPurchase,
   type MinorPurchaseRequest,
   type ReferralCodeResolution,
   type RewardConfigType,
+  type ProgramConfigV1Type,
 } from "@refref/types";
 export class ReferralError extends Error {
   constructor(
@@ -22,6 +26,27 @@ export class ReferralError extends Error {
   ) {
     super(message);
   }
+}
+export async function verifiedPersonAccount(
+  db: Pick<DBType, "select">,
+  userId: string,
+) {
+  const [account] = await db
+    .select({
+      id: s.user.id,
+      verified: s.user.emailVerified,
+      role: s.user.role,
+      banned: s.user.banned,
+    })
+    .from(s.user)
+    .where(eq(s.user.id, userId));
+  if (!account?.verified || account.role === "service" || account.banned)
+    throw new ReferralError(
+      "FORBIDDEN",
+      403,
+      "Verified person account required",
+    );
+  return account;
 }
 export function referralTermsFingerprint(settings: RewardConfigType): string {
   const sorted = (v: unknown): unknown =>
@@ -37,6 +62,103 @@ export function referralTermsFingerprint(settings: RewardConfigType): string {
         : v;
   return createHash("sha256")
     .update(JSON.stringify(sorted(settings)))
+    .digest("hex");
+}
+export function requireApprovedReferralTerms(
+  config: ProgramConfigV1Type | null,
+) {
+  const terms = config?.rewardConfig;
+  if (
+    !terms ||
+    (terms.referrer && !terms.referrer.basis) ||
+    !config?.serverTracking ||
+    config.serverTracking.termsFingerprint !== referralTermsFingerprint(terms)
+  )
+    throw new ReferralError(
+      "REFERRAL_CONDITIONS_NOT_MET",
+      422,
+      "Approved financial terms required",
+    );
+  return terms;
+}
+
+export type ApprovedReferralEconomics = {
+  rewardConfig: RewardConfigType;
+  commission: FrozenCommission;
+  currency: CurrencyType;
+};
+/** Effective native rules, shared by checkout resolution and explicit partner consent. */
+export async function approvedReferralEconomics(
+  db: Pick<DBType, "select">,
+  program: Pick<typeof s.program.$inferSelect, "id" | "config">,
+): Promise<ApprovedReferralEconomics> {
+  const terms = requireApprovedReferralTerms(program.config);
+  const currency = terms.referrer?.currency ?? terms.referee?.currency;
+  if (!currency || (terms.referee && terms.referee.currency !== currency))
+    throw new ReferralError(
+      "REFERRAL_CONDITIONS_NOT_MET",
+      422,
+      "An enabled financial side and matching currencies are required",
+    );
+  const rules = await db
+    .select()
+    .from(s.rewardRule)
+    .where(
+      and(
+        eq(s.rewardRule.programId, program.id),
+        eq(s.rewardRule.isActive, true),
+      ),
+    )
+    .orderBy(desc(s.rewardRule.priority), s.rewardRule.id);
+  const commission = frozenCommissionSchema.safeParse({
+    basis: terms.referrer?.basis ?? null,
+    rules: rules
+      .filter(
+        (rule) =>
+          rule.config.participantType === "referrer" &&
+          rule.config.reward.type === "cash" &&
+          rule.config.trigger.event === "purchase",
+      )
+      .map((rule) => ({
+        ruleId: rule.id,
+        priority: rule.priority ?? 0,
+        config: rule.config,
+      })),
+  });
+  if (
+    !commission.success ||
+    commission.data.rules.some(
+      (rule) =>
+        rule.config.reward.currency !== currency ||
+        (rule.config.conditions?.firstPaidOnly ?? false) !==
+          (terms.firstPaidOnly ?? false),
+    )
+  )
+    throw new ReferralError(
+      "REFERRAL_CONDITIONS_NOT_MET",
+      422,
+      "Approved cash commission conditions are invalid",
+    );
+  return { rewardConfig: terms, currency, commission: commission.data };
+}
+export function partnerTermsFingerprint(
+  program: Pick<
+    typeof s.program.$inferSelect,
+    "config" | "startDate" | "endDate"
+  >,
+  commission: FrozenCommission,
+) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        program.config?.rewardConfig
+          ? referralTermsFingerprint(program.config.rewardConfig)
+          : null,
+        program.startDate?.toISOString() ?? null,
+        program.endDate?.toISOString() ?? null,
+        commission,
+      ]),
+    )
     .digest("hex");
 }
 export async function resolveReferralCode(
@@ -85,25 +207,61 @@ export async function resolveReferralCode(
         422,
         "Referral code is inactive",
       );
-    const config = program.config;
-    const terms = config?.rewardConfig;
+    const {
+      rewardConfig: terms,
+      currency,
+      commission,
+    } = await approvedReferralEconomics(tx, program);
     if (
-      !terms ||
-      (terms.referrer && !terms.referrer.basis) ||
-      !config?.serverTracking ||
-      config.serverTracking.termsFingerprint !==
-        referralTermsFingerprint(terms) ||
       !owner.ownerUserId ||
       !owner.ownershipVerifiedBy ||
-      !owner.ownershipVerifiedAt ||
-      !owner.ownershipEvidence ||
-      !owner.payoutRecipient
+      !owner.ownershipVerifiedAt
     )
       throw new ReferralError(
         "REFERRAL_CONDITIONS_NOT_MET",
         422,
         "Approved terms and verified ownership required",
       );
+    await verifiedPersonAccount(tx, owner.ownerUserId);
+    if (program.config?.selfService) {
+      const currentTermsId = program.config.selfService.termsId ?? "";
+      const [consent] = await tx
+        .select({
+          hasAny: sql<boolean>`count(*)>0`,
+          current: sql<boolean>`COALESCE(bool_or(${s.programAcceptance.termsId}=${currentTermsId}),false)`,
+        })
+        .from(s.programAcceptance)
+        .where(
+          and(
+            eq(s.programAcceptance.productId, input.productId),
+            eq(s.programAcceptance.programId, input.programId),
+            eq(s.programAcceptance.participantId, owner.id),
+            eq(s.programAcceptance.userId, owner.ownerUserId),
+          ),
+        );
+      if (program.config.selfService.enabled || consent?.hasAny) {
+        const [published] = await tx
+          .select({ fingerprint: s.programTerms.termsFingerprint })
+          .from(s.programTerms)
+          .where(
+            and(
+              eq(s.programTerms.id, currentTermsId),
+              eq(s.programTerms.programId, input.programId),
+              eq(s.programTerms.productId, input.productId),
+            ),
+          );
+        if (
+          !consent?.current ||
+          published?.fingerprint !==
+            partnerTermsFingerprint(program, commission)
+        )
+          throw new ReferralError(
+            "REFERRAL_CONDITIONS_NOT_MET",
+            422,
+            "Current programme conditions do not permit this code",
+          );
+      }
+    }
     if (owner.externalId === input.customerExternalId)
       throw new ReferralError(
         "REFERRAL_SELF_REFERRAL",
@@ -126,24 +284,7 @@ export async function resolveReferralCode(
         409,
         "First purchase already claimed",
       );
-    const rules = await tx
-      .select()
-      .from(s.rewardRule)
-      .where(
-        and(
-          eq(s.rewardRule.programId, input.programId),
-          eq(s.rewardRule.isActive, true),
-        ),
-      )
-      .orderBy(desc(s.rewardRule.priority), s.rewardRule.id);
     const discount = terms.referee;
-    const currency = terms.referrer?.currency ?? discount?.currency;
-    if (!currency || (discount && discount.currency !== currency))
-      throw new ReferralError(
-        "REFERRAL_CONDITIONS_NOT_MET",
-        422,
-        "An enabled financial side and matching currencies are required",
-      );
     if (
       discount?.validityDays &&
       (!program.startDate ||
@@ -175,28 +316,9 @@ export async function resolveReferralCode(
                 ? null
                 : decimalToMinor(String(discount.minPurchaseAmount)),
           },
-      commission: {
-        basis: terms.referrer?.basis ?? null,
-        rules: rules
-          .filter(
-            (r) =>
-              r.config.participantType === "referrer" &&
-              r.config.reward.type === "cash" &&
-              r.config.trigger.event === "purchase",
-          )
-          .map((r) => ({
-            ruleId: r.id,
-            priority: r.priority ?? 0,
-            config: r.config,
-          })),
-      },
+      commission,
     });
-    if (
-      !resolution.success ||
-      resolution.data.commission.rules.some(
-        (r) => r.config.reward.currency !== currency,
-      )
-    )
+    if (!resolution.success)
       throw new ReferralError(
         "REFERRAL_CONDITIONS_NOT_MET",
         422,

@@ -13,7 +13,6 @@ import {
 import { Button } from "@refref/ui/components/button";
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -26,8 +25,6 @@ import {
 } from "@refref/ui/components/tooltip";
 import { IconPlus } from "@tabler/icons-react";
 import { CheckCircle2, Loader2 } from "lucide-react";
-import type { inferRouterOutputs } from "@trpc/server";
-import type { AppRouter } from "@/server/api/root";
 import { cn } from "@refref/ui/lib/utils";
 import {
   SingleSidedVisual,
@@ -244,7 +241,7 @@ export function CreateProgramModalV2({
                           </CardDescription>
                           {isUsed && existingProgram && (
                             <p className="text-xs text-muted-foreground mt-2">
-                              Already created as "{existingProgram.name}"
+                              Already created as &quot;{existingProgram.name}&quot;
                             </p>
                           )}
                         </div>

@@ -17,7 +17,6 @@ import {
   Users,
   Activity,
   Calendar,
-  Mail,
   User,
   Hash,
 } from "lucide-react";
@@ -65,7 +64,7 @@ export function ParticipantCard({ participant, scope }: ParticipantCardProps) {
       setCopied(true);
       toast.success("Referral link copied to clipboard!");
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
+    } catch {
       toast.error("Failed to copy referral link");
     }
   };
@@ -274,7 +273,7 @@ export function ParticipantCard({ participant, scope }: ParticipantCardProps) {
                 <Users className="h-12 w-12 mx-auto mb-3 opacity-50" />
                 <p className="font-medium">No referrals yet</p>
                 <p className="text-sm">
-                  This participant hasn't made any referrals yet.
+                  This participant hasn&apos;t made any referrals yet.
                 </p>
               </div>
             )}

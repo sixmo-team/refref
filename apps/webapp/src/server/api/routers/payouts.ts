@@ -7,9 +7,22 @@ import {
   completePayout,
   rejectPayout,
   ReferralError,
+  ensureReferrerParticipant,
+  firstParticipantCode,
 } from "@refref/coredb";
 import { validateProductScope } from "@refref/coredb/security";
 import { currencySchema, minorAmountSchema } from "@refref/types";
+import { generateRefcode } from "@refref/utils";
+
+const ownershipProof = z
+  .object({
+    productId: z.string().min(1),
+    ownerUserId: z.string().min(1),
+    evidence: z.string().trim().min(1).max(500),
+    externalOwnershipVerified: z.literal(true),
+  })
+  .strict();
+
 const scopedPayout = z
   .object({ productId: z.string().min(1), payoutId: z.string().min(1) })
   .strict();
@@ -110,23 +123,7 @@ export const payoutsRouter = createTRPCRouter({
       return rejectPayout(ctx.db, ctx.userId, input);
     }),
   verifyOwnership: adminProcedure
-    .input(
-      z
-        .object({
-          productId: z.string().min(1),
-          participantId: z.string().min(1),
-          ownerUserId: z.string().min(1),
-          evidence: z.string().trim().min(1).max(500),
-          externalOwnershipVerified: z.literal(true),
-          recipient: z
-            .object({
-              name: z.string().trim().min(1).max(200),
-              details: z.string().trim().min(1).max(1000),
-            })
-            .strict(),
-        })
-        .strict(),
-    )
+    .input(ownershipProof.extend({ participantId: z.string().min(1) }).strict())
     .mutation(async ({ ctx, input }) => {
       await validateProductScope(
         ctx.db,
@@ -134,63 +131,71 @@ export const payoutsRouter = createTRPCRouter({
         input.productId,
       );
       return ctx.db.transaction(async (tx) => {
-        const [participant] = await tx
-          .select()
-          .from(schema.participant)
+        const participant = await ensureReferrerParticipant(tx, {
+          productId: input.productId,
+          ownerUserId: input.ownerUserId,
+          actorId: ctx.userId,
+          evidence: input.evidence,
+          participantId: input.participantId,
+        });
+        return { participantId: participant.id, verified: true };
+      });
+    }),
+  enrollReferrer: adminProcedure
+    .input(ownershipProof.extend({ programId: z.string().min(1) }).strict())
+    .mutation(async ({ ctx, input }) => {
+      await validateProductScope(
+        ctx.db,
+        ctx.activeOrganizationId,
+        input.productId,
+        input.programId,
+      );
+      return ctx.db.transaction(async (tx) => {
+        const [program] = await tx
+          .select({ status: schema.program.status })
+          .from(schema.program)
           .where(
             and(
-              eq(schema.participant.id, input.participantId),
-              eq(schema.participant.productId, input.productId),
+              eq(schema.program.id, input.programId),
+              eq(schema.program.productId, input.productId),
             ),
           )
-          .for("update");
-        const [owner] = await tx
-          .select({
-            verified: schema.user.emailVerified,
-            role: schema.user.role,
-          })
-          .from(schema.user)
-          .where(eq(schema.user.id, input.ownerUserId));
-        if (
-          !participant ||
-          !owner?.verified ||
-          owner.role === "service" ||
-          !participant.externalId
-        )
+          .for("share");
+        if (program?.status !== "active")
           throw new ReferralError(
-            "FORBIDDEN",
-            403,
-            "Existing externally identified participant and verified RefRef person account required",
-          );
-        if (participant.ownerUserId) {
-          if (
-            participant.ownerUserId === input.ownerUserId &&
-            participant.ownershipEvidence === input.evidence &&
-            participant.payoutRecipient?.name === input.recipient.name &&
-            participant.payoutRecipient?.details === input.recipient.details
-          )
-            return { participantId: participant.id, verified: true };
-          throw new ReferralError(
-            "OWNERSHIP_CONFLICT",
+            "REFERRAL_CODE_INACTIVE",
             409,
-            "Verified financial ownership cannot be reassigned through this API",
+            "Enroll referrers only after the program is active",
           );
+        const participant = await ensureReferrerParticipant(tx, {
+          productId: input.productId,
+          ownerUserId: input.ownerUserId,
+          actorId: ctx.userId,
+          evidence: input.evidence,
+        });
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const code = generateRefcode();
+          if (!code) break;
+          try {
+            return await firstParticipantCode(tx, {
+              productId: input.productId,
+              programId: input.programId,
+              participantId: participant.id,
+              code,
+            });
+          } catch (error) {
+            if (
+              !(error instanceof ReferralError) ||
+              error.code !== "REFERRAL_CODE_TAKEN"
+            )
+              throw error;
+          }
         }
-        await tx
-          .update(schema.participant)
-          .set({
-            ownerUserId: input.ownerUserId,
-            ownershipVerifiedBy: ctx.userId,
-            ownershipVerifiedAt: new Date(),
-            ownershipEvidence: input.evidence,
-            payoutRecipient: {
-              ...input.recipient,
-              verifiedBy: ctx.userId,
-              verifiedAt: new Date().toISOString(),
-            },
-          })
-          .where(eq(schema.participant.id, participant.id));
-        return { participantId: participant.id, verified: true };
+        throw new ReferralError(
+          "REFERRAL_UNAVAILABLE",
+          503,
+          "Referral code generation unavailable",
+        );
       });
     }),
 });

@@ -1,9 +1,7 @@
 import type * as React from "react";
-import { ChevronRightIcon } from "lucide-react";
 import {
   Timeline,
   TimelineContent,
-  TimelineDate,
   TimelineHeader,
   TimelineIndicator,
   TimelineItem,

@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { DBType } from "../index.js";
 import { user, orgUser, apikey, org } from "../schema.js";
 import { createId } from "@paralleldrive/cuid2";
 
@@ -29,7 +29,7 @@ export interface ApiKeyWithMetadata {
  * Find service account for a given organization
  */
 async function findServiceAccountForOrganization(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
 ): Promise<ServiceAccount | null> {
   const result = await db
@@ -52,7 +52,7 @@ async function findServiceAccountForOrganization(
  * Idempotent with retry logic for race conditions
  */
 async function createServiceAccount(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
   maxRetries = 3,
 ): Promise<ServiceAccount> {
@@ -109,11 +109,13 @@ async function createServiceAccount(
       }
 
       return created;
-    } catch (error: any) {
+    } catch (error) {
       // Check if it's a duplicate error
       if (
-        error?.message?.includes("duplicate") ||
-        error?.code === "23505" // PostgreSQL unique violation
+        typeof error === "object" && error !== null &&
+        (("message" in error && typeof error.message === "string" &&
+          error.message.includes("duplicate")) ||
+          ("code" in error && error.code === "23505")) // PostgreSQL unique violation
       ) {
         // Another request created it, try to fetch
         const existing = await findServiceAccountForOrganization(
@@ -146,7 +148,7 @@ async function createServiceAccount(
  * @returns Service account user ID
  */
 export async function ensureServiceAccountForOrganization(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
 ): Promise<string> {
   const serviceAccount = await createServiceAccount(db, organizationId);
@@ -158,7 +160,7 @@ export async function ensureServiceAccountForOrganization(
  * Redacts the key value to show only prefix and last 4 characters
  */
 export async function getApiKeysForOrganization(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
 ): Promise<ApiKeyWithMetadata[]> {
   // Get service account for this organization
@@ -204,7 +206,7 @@ export async function getApiKeysForOrganization(
  * Only admin/owner of the organization can manage keys
  */
 export async function validateApiKeyPermission(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
   userId: string,
 ): Promise<boolean> {
@@ -225,7 +227,7 @@ export async function validateApiKeyPermission(
  * @returns true if deleted, false if not found or doesn't belong to organization
  */
 export async function deleteApiKeyForOrganization(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
   organizationId: string,
   keyId: string,
 ): Promise<boolean> {
@@ -252,7 +254,7 @@ export async function deleteApiKeyForOrganization(
  * Clean up old product service accounts (migration helper)
  */
 export async function cleanupProductServiceAccounts(
-  db: PostgresJsDatabase<any>,
+  db: DBType,
 ): Promise<void> {
   // Delete all service accounts that have the old product pattern
   // Pattern: service-account_{productId}@refref.local where productId is a CUID

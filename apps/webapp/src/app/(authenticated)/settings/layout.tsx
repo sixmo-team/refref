@@ -3,12 +3,10 @@ import {
   SidebarProvider,
   Sidebar,
   SidebarInset,
-  SidebarHeader,
   SidebarContent,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarSeparator,
   SidebarGroup,
   SidebarGroupLabel,
 } from "@refref/ui/components/sidebar";
@@ -23,6 +21,7 @@ import {
   IconKey,
 } from "@tabler/icons-react";
 import { usePathname } from "next/navigation";
+import { Toaster } from "sonner";
 
 const SidebarItems = [
   {
@@ -87,6 +86,7 @@ export default function SettingsLayout({
         } as React.CSSProperties
       }
     >
+      <Toaster />
       {/* Sidebar */}
       <Sidebar collapsible="offcanvas" variant="inset">
         <SidebarContent>

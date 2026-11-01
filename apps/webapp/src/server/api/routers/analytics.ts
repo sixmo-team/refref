@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
-import { db, schema } from "@/server/db";
+import { schema } from "@/server/db";
 import { eq, and, sql, desc, gte, lte, lt, count } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
-const { program: programTable, participant, referral, product } = schema;
+const { program: programTable, participant, referral } = schema;
 const dayMs = 86_400_000;
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00.000Z`);

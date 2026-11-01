@@ -3,10 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  AlertCircle,
   CheckCircle2,
   Clock,
-  ExternalLink,
   PauseCircle,
   Settings,
   Users,
@@ -16,7 +14,6 @@ import {
   BarChart,
   Trash2,
 } from "lucide-react";
-import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -276,7 +273,7 @@ export function ProgramCard({ program, scope, canManage }: ProgramCardProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Program</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove "{program.name}"? Programs with codes or history are
+              Remove &quot;{program.name}&quot;? Programs with codes or history are
               archived; empty programs are deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>

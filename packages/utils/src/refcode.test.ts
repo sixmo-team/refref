@@ -1,86 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-  generateGlobalCode,
+  generateRefcode,
+  validateRefcode,
   validateVanityCode,
   normalizeCode,
-  isGlobalCodeFormat,
+  isRefcodeFormat,
 } from "./refcode";
 
 describe("refcode utilities", () => {
-  describe("generateGlobalCode", () => {
-    it("should generate codes with correct length (7 characters)", () => {
-      const code = generateGlobalCode();
-      expect(code).toBeDefined();
-      expect(code).toHaveLength(7);
+  describe("generated code suggestions", () => {
+    it("produces a canonical usable suggestion without requiring a custom text", () => {
+      expect(generateRefcode()).toMatch(/^[a-z0-9]{3,32}$/);
     });
-
-    it("should only use allowed characters (2-9, a-z)", () => {
-      const code = generateGlobalCode();
-      expect(code).toBeDefined();
-      // Should only contain numbers 2-9 and lowercase letters (excluding confusing ones)
-      expect(code).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{7}$/);
-    });
-
-    it("should not include confusing characters (0, 1, O, I, l)", () => {
-      // Generate many codes to check character set
-      for (let i = 0; i < 100; i++) {
-        const code = generateGlobalCode();
-        expect(code).toBeDefined();
-        // Should not contain 0, 1, O, I, or l
-        expect(code).not.toMatch(/[01OIl]/);
-      }
-    });
-
-    it("should generate unique codes", () => {
-      const codes = new Set<string>();
-      const iterations = 1000;
-
-      for (let i = 0; i < iterations; i++) {
-        const code = generateGlobalCode();
-        if (code) {
-          codes.add(code);
-        }
-      }
-
-      // Should have generated close to 1000 unique codes
-      // (allowing for small chance of collision)
-      expect(codes.size).toBeGreaterThan(990);
-    });
-
-    it("should filter profanity and retry", () => {
-      // This test verifies that profane codes are rejected
-      // We can't guarantee a profane code is generated, but we can test the logic exists
-      const code = generateGlobalCode();
-      expect(code).toBeDefined();
-      expect(typeof code).toBe("string");
-    });
-
-    it("should return null after exhausting attempts", () => {
-      // Mock the bad-words filter to always return true (profane)
-      const mockFilter = {
-        isProfane: vi.fn().mockReturnValue(true),
-      };
-
-      // We can't easily mock the internal filter, so this test documents the behavior
-      // In practice, with 0 maxAttempts and a profane generator, it should return null
-      const code = generateGlobalCode(0);
-      // With 0 maxAttempts, it won't even try once, so it returns null
-      expect(code).toBeNull();
-    });
-
-    it("should accept custom maxAttempts count", () => {
-      const code = generateGlobalCode(3);
-      // Should work with custom maxAttempts count
-      expect(code).toBeDefined();
-      expect(code).toHaveLength(7);
-    });
-
-    it("should be lowercase only", () => {
-      for (let i = 0; i < 50; i++) {
-        const code = generateGlobalCode();
-        expect(code).toBeDefined();
-        expect(code).toBe(code?.toLowerCase());
-      }
+    it("reports exhausted generation attempts instead of inventing success", () => {
+      expect(generateRefcode(0)).toBeNull();
     });
   });
 
@@ -265,81 +198,20 @@ describe("refcode utilities", () => {
     });
   });
 
-  describe("isGlobalCodeFormat", () => {
-    it("should return true for 7-char alphanumeric codes", () => {
-      expect(isGlobalCodeFormat("abc1234")).toBe(true);
-      expect(isGlobalCodeFormat("xyz9876")).toBe(true);
-      expect(isGlobalCodeFormat("test123")).toBe(true);
+  describe("tracking code policy", () => {
+    it.each(["abc", "ANNA10", "a".repeat(32), "  ANNATELEGRAM  "])("accepts %s", (code) => {
+      expect(isRefcodeFormat(code)).toBe(true);
     });
-
-    it("should return false for codes with hyphens (local codes)", () => {
-      expect(isGlobalCodeFormat("john-doe")).toBe(false);
-      expect(isGlobalCodeFormat("abc-123")).toBe(false);
+    it.each(["ab", "a".repeat(33), "john-doe", "anna 10", "анна10", "Kaa", "health", ""])("rejects %s", (code) => {
+      expect(isRefcodeFormat(code)).toBe(false);
     });
-
-    it("should return false for codes of wrong length", () => {
-      expect(isGlobalCodeFormat("abc")).toBe(false); // Too short
-      expect(isGlobalCodeFormat("abc12")).toBe(false); // Too short
-      expect(isGlobalCodeFormat("abc12345")).toBe(false); // Too long
-      expect(isGlobalCodeFormat("abcdefghijk")).toBe(false); // Too long
-    });
-
-    it("should be case-insensitive", () => {
-      expect(isGlobalCodeFormat("ABC1234")).toBe(true);
-      expect(isGlobalCodeFormat("AbC1234")).toBe(true);
-      expect(isGlobalCodeFormat("TESTXYZ")).toBe(true);
-    });
-
-    it("should return false for codes with special characters", () => {
-      expect(isGlobalCodeFormat("abc@123")).toBe(false);
-      expect(isGlobalCodeFormat("test_12")).toBe(false);
-      expect(isGlobalCodeFormat("code.12")).toBe(false);
-    });
-
-    it("should return false for codes with spaces", () => {
-      expect(isGlobalCodeFormat("abc 123")).toBe(false);
-    });
-
-    it("should handle codes that match generated format", () => {
-      // Generate some codes and verify they pass the format check
-      for (let i = 0; i < 10; i++) {
-        const code = generateGlobalCode();
-        expect(code).toBeDefined();
-        if (code) {
-          expect(isGlobalCodeFormat(code)).toBe(true);
-        }
-      }
-    });
-
-    it("should normalize before checking", () => {
-      expect(isGlobalCodeFormat("  ABC1234  ")).toBe(true);
-      expect(isGlobalCodeFormat("\tXYZ5678\n")).toBe(true);
-    });
-
-    it("should return false for empty strings", () => {
-      expect(isGlobalCodeFormat("")).toBe(false);
-      expect(isGlobalCodeFormat("   ")).toBe(false);
+    it("rejects inappropriate user text before a code is created", () => {
+      expect(validateRefcode("fuck").isValid).toBe(false);
+      expect(validateRefcode("ANNA10").isValid).toBe(true);
     });
   });
 
   describe("integration tests", () => {
-    it("generated global codes should pass format check", () => {
-      for (let i = 0; i < 50; i++) {
-        const code = generateGlobalCode();
-        expect(code).toBeDefined();
-        if (code) {
-          expect(isGlobalCodeFormat(code)).toBe(true);
-        }
-      }
-    });
-
-    it("generated global codes should be normalized", () => {
-      const code = generateGlobalCode();
-      expect(code).toBeDefined();
-      if (code) {
-        expect(normalizeCode(code)).toBe(code);
-      }
-    });
 
     it("valid vanity codes should be normalized", () => {
       const testCodes = ["John-Doe", "TEST-123", "MyCODE"];
@@ -357,7 +229,7 @@ describe("refcode utilities", () => {
       const localCodes = ["john-doe", "my-code", "user-123"];
 
       localCodes.forEach((code) => {
-        expect(isGlobalCodeFormat(code)).toBe(false);
+        expect(isRefcodeFormat(code)).toBe(false);
         expect(validateVanityCode(code).isValid).toBe(true);
       });
     });
@@ -367,7 +239,7 @@ describe("refcode utilities", () => {
       // This is by design - a user could create a vanity code that looks like a global one
       const globalLikeCode = "abc1234";
 
-      expect(isGlobalCodeFormat(globalLikeCode)).toBe(true);
+      expect(isRefcodeFormat(globalLikeCode)).toBe(true);
       expect(validateVanityCode(globalLikeCode).isValid).toBe(true);
 
       // This is intentional - the database uniqueness constraints handle conflicts

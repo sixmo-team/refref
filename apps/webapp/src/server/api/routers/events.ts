@@ -4,7 +4,7 @@ import {
   protectedProcedure,
   adminProcedure,
 } from "@/server/api/trpc";
-import { db, schema } from "@/server/db";
+import { schema } from "@/server/db";
 const {
   event: eventTable,
   eventDefinition,
@@ -22,7 +22,6 @@ import {
   SecurityError,
   validateProductScope,
 } from "@refref/coredb/security";
-import { safeError } from "@refref/utils";
 
 // Input schema for creating events
 const createEventSchema = z.object({
@@ -62,7 +61,7 @@ export const eventsRouter = createTRPCRouter({
         }
         throw error;
       }
-      await processEventForRewards(ctx.db, newEvent.id);
+      await processEventForRewards(ctx.db, newEvent.id, "web");
 
       return newEvent;
     }),

@@ -36,6 +36,27 @@
       "when": 1792627200000,
       "tag": "0004_first_payment_and_payout",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793439529519,
+      "tag": "0005_partner_self_service",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793440661386,
+      "tag": "0006_partner_terms_period",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793443065633,
+      "tag": "0007_partner_effective_commission",
+      "breakpoints": true
     }
   ]
 }

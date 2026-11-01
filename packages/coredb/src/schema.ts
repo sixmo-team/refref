@@ -26,6 +26,9 @@ import type {
   EventMetadata,
   RewardRuleConfigV1Type,
   RewardMetadataV1Type,
+  PayoutRecipientSnapshot,
+  RewardConfigType,
+  FrozenCommission,
 } from "@refref/types";
 
 // Base table for common fields
@@ -252,12 +255,7 @@ export const participant = pgTable(
       withTimezone: true,
     }),
     ownershipEvidence: text("ownership_evidence"),
-    payoutRecipient: jsonb("payout_recipient").$type<{
-      name: string;
-      details: string;
-      verifiedAt: string;
-      verifiedBy: string;
-    }>(),
+    payoutRecipient: jsonb("payout_recipient").$type<PayoutRecipientSnapshot>(),
   },
   (table): PgTableExtraConfigValue[] => [
     unique().on(table.productId, table.externalId),
@@ -277,7 +275,7 @@ export const participant = pgTable(
     }).onDelete("restrict"),
     check(
       "participant_verified_ownership_check",
-      sql`(${table.ownerUserId} IS NULL AND ${table.ownershipVerifiedBy} IS NULL AND ${table.ownershipVerifiedAt} IS NULL AND ${table.ownershipEvidence} IS NULL AND ${table.payoutRecipient} IS NULL) OR (${table.ownerUserId} IS NOT NULL AND ${table.ownershipVerifiedBy} IS NOT NULL AND ${table.ownershipVerifiedAt} IS NOT NULL AND ${table.ownershipEvidence} IS NOT NULL AND ${table.payoutRecipient} IS NOT NULL AND length(${table.ownershipEvidence})>0 AND jsonb_typeof(${table.payoutRecipient})='object')`,
+      sql`(${table.ownerUserId} IS NULL AND ${table.ownershipVerifiedBy} IS NULL AND ${table.ownershipVerifiedAt} IS NULL AND ${table.ownershipEvidence} IS NULL AND ${table.payoutRecipient} IS NULL) OR (${table.ownerUserId} IS NOT NULL AND ${table.ownershipVerifiedBy} IS NOT NULL AND ${table.ownershipVerifiedAt} IS NOT NULL AND (${table.ownershipEvidence} IS NULL OR length(${table.ownershipEvidence})>0) AND (${table.payoutRecipient} IS NULL OR jsonb_typeof(${table.payoutRecipient})='object'))`,
     ),
   ],
 );
@@ -377,7 +375,7 @@ export const refcode = pgTable(
   {
     ...baseFields("refcode"),
     isActive: boolean("is_active").notNull().default(true),
-    // Auto-generated 7-character code (e.g., "abc1234")
+    // Generated suggestion or chosen tracking code, canonical lowercase ASCII.
     code: text("code").notNull(),
     // Core relationships
     participantId: text("participant_id")
@@ -660,12 +658,7 @@ export const payout = pgTable(
     confirmedBy: text("confirmed_by").references(() => user.id, {
       onDelete: "restrict",
     }),
-    recipient: jsonb("recipient").notNull().$type<{
-      name: string;
-      details: string;
-      verifiedAt: string;
-      verifiedBy: string;
-    }>(),
+    recipient: jsonb("recipient").notNull().$type<PayoutRecipientSnapshot>(),
     executionMethod: text("execution_method"),
     provider: text("provider"),
     executionNamespace: text("execution_namespace"),
@@ -738,5 +731,79 @@ export const payout = pgTable(
       table.status,
       table.createdAt,
     ),
+  ],
+);
+
+// Published rules and their actual economic terms are immutable financial facts.
+export const programTerms = pgTable(
+  "program_terms",
+  {
+    ...baseFields("programTerms"),
+    productId: text("product_id").notNull(),
+    programId: text("program_id").notNull(),
+    body: text("body").notNull(),
+    rewardConfig: jsonb("reward_config").notNull().$type<RewardConfigType>(),
+    commission: jsonb("commission").notNull().$type<FrozenCommission>(),
+    startDate: timestamp("start_date", { withTimezone: true }),
+    endDate: timestamp("end_date", { withTimezone: true }),
+    termsFingerprint: text("terms_fingerprint").notNull(),
+    publishedBy: text("published_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    unique("program_terms_scope_unique").on(
+      table.productId,
+      table.programId,
+      table.id,
+    ),
+    foreignKey({
+      name: "program_terms_program_scope_fk",
+      columns: [table.productId, table.programId],
+      foreignColumns: [program.productId, program.id],
+    }).onDelete("restrict"),
+    check(
+      "program_terms_body_check",
+      sql`length(trim(${table.body})) BETWEEN 200 AND 30000`,
+    ),
+  ],
+);
+
+export const programAcceptance = pgTable(
+  "program_acceptance",
+  {
+    ...baseFields("programAcceptance"),
+    productId: text("product_id").notNull(),
+    programId: text("program_id").notNull(),
+    participantId: text("participant_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    termsId: text("terms_id").notNull(),
+  },
+  (table) => [
+    unique("program_acceptance_user_version_unique").on(
+      table.userId,
+      table.programId,
+      table.termsId,
+    ),
+    foreignKey({
+      name: "program_acceptance_terms_scope_fk",
+      columns: [table.productId, table.programId, table.termsId],
+      foreignColumns: [
+        programTerms.productId,
+        programTerms.programId,
+        programTerms.id,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "program_acceptance_owner_scope_fk",
+      columns: [table.productId, table.participantId, table.userId],
+      foreignColumns: [
+        participant.productId,
+        participant.id,
+        participant.ownerUserId,
+      ],
+    }).onDelete("restrict"),
   ],
 );

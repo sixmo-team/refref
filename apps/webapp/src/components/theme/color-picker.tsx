@@ -5,21 +5,21 @@ import React, { useCallback, useEffect, useMemo, useRef } from "react";
 
 const DEBOUNCE_DELAY = 300;
 
-function debounce<T extends (...args: any[]) => void>(
-  func: T,
+function debounce<Args extends unknown[]>(
+  func: (...args: Args) => void,
   delay: number,
-): T & { cancel: () => void } {
-  let timeoutId: NodeJS.Timeout | null = null;
+) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-  const debouncedFunc = ((...args: Parameters<T>) => {
-    if (timeoutId) clearTimeout(timeoutId);
+  const debouncedFunc = (...args: Args) => {
+    clearTimeout(timeoutId);
     timeoutId = setTimeout(() => func(...args), delay);
-  }) as T & { cancel: () => void };
+  };
 
   debouncedFunc.cancel = () => {
     if (timeoutId) {
       clearTimeout(timeoutId);
-      timeoutId = null;
+      timeoutId = undefined;
     }
   };
 
@@ -102,6 +102,7 @@ export function ColorPicker({
         <input
           ref={textInputRef}
           type="text"
+          name={name}
           defaultValue={color}
           onChange={handleTextInputChange}
           className="bg-input/25 border-border/20 h-8 flex-1 rounded border px-2 text-sm"

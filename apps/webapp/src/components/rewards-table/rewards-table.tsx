@@ -6,7 +6,6 @@ import { api } from "@/trpc/react";
 import { getQueryKey } from "@trpc/react-query";
 import { getRewardsTableColumns, type Reward } from "./rewards-table-columns"; // Adjusted import
 import { DataTable } from "@refref/ui/components/data-table/data-table";
-import { DataTableToolbar } from "@refref/ui/components/data-table/data-table-toolbar";
 import {
   useReactTable,
   getCoreRowModel,

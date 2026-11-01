@@ -53,3 +53,5 @@ export * from "./lib/organization-service-account.js";
 export * from "./reward-engine.js";
 export * from "./referrals.js";
 export * from "./payouts.js";
+export * from "./partners.js";
+export * from "./partner-statistics.js";

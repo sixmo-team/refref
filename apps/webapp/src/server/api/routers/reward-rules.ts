@@ -4,7 +4,7 @@ import {
   protectedProcedure,
   adminProcedure,
 } from "@/server/api/trpc";
-import { db, schema } from "@/server/db";
+import { schema } from "@/server/db";
 const { rewardRule, program: programTable } = schema;
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";

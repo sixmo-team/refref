@@ -58,7 +58,7 @@ export function CreateOrgApiKeyDialog({
     },
   });
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
     if (creating.current) return;
     if (dedicated && (!productId.trim() || !programId.trim())) {
       toast.error("Explicit authorized product and program IDs are required");
@@ -70,8 +70,8 @@ export function CreateOrgApiKeyDialog({
     }
 
     creating.current = true;
-    try {
-      await createKeyMutation.mutateAsync({
+    createKeyMutation.mutate(
+      {
         name,
         expiresIn: parseInt(expiresIn),
         ...(dedicated
@@ -82,10 +82,13 @@ export function CreateOrgApiKeyDialog({
               },
             }
           : {}),
-      });
-    } finally {
-      creating.current = false;
-    }
+      },
+      {
+        onSettled: () => {
+          creating.current = false;
+        },
+      },
+    );
   };
 
   const handleCopyKey = async () => {
@@ -95,7 +98,7 @@ export function CreateOrgApiKeyDialog({
       setCopied(true);
       toast.success("API key copied to clipboard");
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch {
       toast.error("Failed to copy API key");
     }
   };
@@ -134,10 +137,11 @@ export function CreateOrgApiKeyDialog({
 
           <div className="space-y-4">
             <div>
-              <Label>Your API Key</Label>
+              <Label htmlFor="created-api-key">Your API Key</Label>
               <div className="flex items-center gap-2 mt-2">
                 <div className="relative flex-1">
                   <Input
+                    id="created-api-key"
                     readOnly
                     type={showKey ? "text" : "password"}
                     value={createdKey}
@@ -148,6 +152,7 @@ export function CreateOrgApiKeyDialog({
                     variant="ghost"
                     size="sm"
                     className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    aria-label={showKey ? "Hide API key" : "Show API key"}
                     onClick={() => setShowKey(!showKey)}
                   >
                     {showKey ? (
@@ -179,8 +184,9 @@ export function CreateOrgApiKeyDialog({
             </div>
             <Alert>
               <AlertDescription>
-                This API key has full access to your organization's data,
-                including all products and programs.
+                {createKeyMutation.variables?.referralScope
+                  ? "This key is restricted to first-payment resolution and purchase for the chosen product and program."
+                  : "This key has full access to your organization's products and programs."}
               </AlertDescription>
             </Alert>
           </div>
@@ -211,11 +217,12 @@ export function CreateOrgApiKeyDialog({
             <Input
               id="name"
               placeholder="e.g., Production API Key"
+              maxLength={32}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              A descriptive name to identify this API key
+              A descriptive name, up to 32 characters
             </p>
           </div>
           <label className="flex gap-2">

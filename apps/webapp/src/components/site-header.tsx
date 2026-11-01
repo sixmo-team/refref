@@ -1,4 +1,3 @@
-import { Button } from "@refref/ui/components/button";
 import { Separator } from "@refref/ui/components/separator";
 import { SidebarTrigger } from "@refref/ui/components/sidebar";
 import { ReactNode } from "react";

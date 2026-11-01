@@ -5,12 +5,10 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import { schema } from "@/server/db";
-const { product, productSecrets, productUser, orgUser } = schema;
+const { product, productSecrets, orgUser } = schema;
 import assert from "assert";
 import { createId, init } from "@paralleldrive/cuid2";
 import { randomBytes } from "crypto";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
 import {
   appTypes,
   useCases,

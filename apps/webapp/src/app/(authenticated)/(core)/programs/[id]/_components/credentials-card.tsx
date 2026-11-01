@@ -36,7 +36,7 @@ export function CredentialsCard({
       setCopiedField(fieldName);
       toast.success(`${fieldName} copied to clipboard!`);
       setTimeout(() => setCopiedField(null), 2000);
-    } catch (err) {
+    } catch {
       toast.error(`Failed to copy ${fieldName}`);
     }
   };

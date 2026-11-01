@@ -16,11 +16,14 @@ export const minorAmountSchema = z
   .int()
   .nonnegative()
   .max(Number.MAX_SAFE_INTEGER);
-export const canonicalRefcodeSchema = z.string().regex(/^[a-z0-9]{7}$/);
+export const canonicalRefcodeSchema = z
+  .string()
+  .regex(/^[a-z0-9]{3,32}$/)
+  .refine((code) => code !== "health", "This code is reserved");
 export const inputRefcodeSchema = z
   .string()
   .max(64)
-  .regex(/^\s*[A-Za-z0-9]{7}\s*$/)
+  .regex(/^\s*[A-Za-z0-9]{3,32}\s*$/)
   .trim()
   .toLowerCase()
   .pipe(canonicalRefcodeSchema);
@@ -106,6 +109,7 @@ export const frozenCommissionSchema = z
     (v) => new Set(v.rules.map((r) => r.ruleId)).size === v.rules.length,
     "Duplicate rule",
   );
+export type FrozenCommission = z.infer<typeof frozenCommissionSchema>;
 export const referralCodeResolutionSchema = z
   .object({
     codeId: referralIdSchema,

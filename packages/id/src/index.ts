@@ -27,6 +27,8 @@ const ENTITY_PREFIXES = {
   referral: "ref",
   event: "evt",
   payout: "pay",
+  programTerms: "ptrm",
+  programAcceptance: "pac",
 } as const;
 
 /**

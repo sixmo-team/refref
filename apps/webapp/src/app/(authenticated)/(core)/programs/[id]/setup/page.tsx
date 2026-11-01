@@ -1,5 +1,5 @@
 "use client";
-import { useState, ReactNode, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, type RouterInputs } from "@/trpc/react";
 import { getQueryKey } from "@trpc/react-query";
@@ -10,41 +10,28 @@ import {
   StepperTitle,
   StepperTrigger,
 } from "@refref/ui/components/stepper";
-import { Loader2, Users, Rocket } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { SiteBreadcrumbs } from "@/components/site-breadcrumbs";
 import { Button } from "@refref/ui/components/button";
-import { RewardStep } from "./_components/RewardStep";
-import { BrandStep } from "@/components/program-setup/brand-step";
+import { RewardStep, type RewardStepRef } from "./_components/RewardStep";
+import { BrandStep, type BrandStepData } from "@/components/program-setup/brand-step";
 import { toast } from "sonner";
 import assert from "assert";
 import {
   ProgramTemplateStepKeyType,
+  type RewardConfigType,
   getProgramTemplateById,
 } from "@refref/types";
 import { useSession } from "@/lib/auth-client";
 import { useDeniedRead } from "@/hooks/use-denied-read";
 
-// Map step keys to their respective components
-const stepComponentMap: Record<
-  ProgramTemplateStepKeyType,
-  React.ComponentType<any>
-> = {
-  brand: BrandStep,
-  reward: RewardStep,
-};
-
-// Define a common interface for step refs
-interface StepRef {
-  submitForm: () => Promise<any>; // Return type depends on step, use 'any' for now
-}
 
 // Dynamically build steps from template config
 type StepDef = {
-  key: string;
+  key: ProgramTemplateStepKeyType;
   title: string;
   description: string | undefined;
-  Component: React.ComponentType<any>;
 };
 
 export default function ProgramSetupPage() {
@@ -106,11 +93,13 @@ function ProgramSetup({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   //! aggregated config for steps done till now
-  const [aggregatedConfig, setAggregatedConfig] = useState<Record<string, any>>(
-    {},
-  );
+  const [aggregatedConfig, setAggregatedConfig] = useState<{
+    brand?: BrandStepData;
+    reward?: RewardConfigType;
+  }>({});
 
-  const stepRef = useRef<StepRef>(null);
+  const brandRef = useRef<{ submitForm: () => Promise<BrandStepData> }>(null);
+  const rewardRef = useRef<RewardStepRef>(null);
 
   useEffect(() => {
     if (!blocked) return;
@@ -176,25 +165,15 @@ function ProgramSetup({
         title: string;
         description?: string;
       }) => {
-        const Comp = stepComponentMap[step.key];
         return {
           key: step.key,
           title: step.title,
           description: step.description,
-          Component: Comp,
         };
       },
     )
     .filter((step) => !!step);
 
-  // Calculate pending steps and completion status for the top bar
-  const pendingSteps =
-    program?.setup?.steps?.filter((step) => step.isRequired && !step.isComplete)
-      .length ?? 0;
-
-  const allRequiredComplete = program?.setup?.steps
-    ?.filter((step) => step.isRequired)
-    .every((step) => step.isComplete);
 
   // Breadcrumbs for the top bar
   const breadcrumbs = [
@@ -203,11 +182,6 @@ function ProgramSetup({
     { label: "Setup", href: `/programs/${params?.id}/setup` },
   ];
 
-  // Helper to map step data to the consolidated config structure
-  // Now returns raw data under a key specific to the step
-  function mapStepDataToConsolidated(stepKey: string, data: any) {
-    return { [stepKey]: data };
-  }
 
   // Function to handle moving to the previous step
   function handlePrevious() {
@@ -218,27 +192,29 @@ function ProgramSetup({
 
   // Function to handle moving to the next step or completing the setup
   async function handleNextOrComplete() {
-    const currentStep = stepRef.current;
-    if (blocked || !currentStep) return;
+    const currentStepKey = STEPS[activeStep]?.key;
+    const brandStep = brandRef.current;
+    const rewardStep = rewardRef.current;
+    if (blocked || !(currentStepKey === "brand" ? brandStep : rewardStep)) return;
 
     try {
       setIsSubmitting(true);
 
-      const currentStepKey = STEPS[activeStep]?.key;
 
       if (!currentStepKey) {
         throw new Error("Could not determine current step key.");
       }
 
-      // Validate and get data from the current step
-      const stepData = await currentStep.submitForm();
-      if (!stepRef.current) return;
-
-      // Aggregate the data
-      const newAggregatedConfig = {
-        ...aggregatedConfig,
-        ...mapStepDataToConsolidated(currentStepKey, stepData),
-      };
+      // Each step has a different validated result; keep the key and value paired.
+      let newAggregatedConfig = aggregatedConfig;
+      if (currentStepKey === "brand") {
+        if (!brandStep) return;
+        newAggregatedConfig = { ...aggregatedConfig, brand: await brandStep.submitForm() };
+      } else {
+        if (!rewardStep) return;
+        newAggregatedConfig = { ...aggregatedConfig, reward: await rewardStep.submitForm() };
+      }
+      if (currentStepKey === "brand" ? !brandRef.current : !rewardRef.current) return;
       setAggregatedConfig(newAggregatedConfig);
 
       assert(program);
@@ -313,12 +289,13 @@ function ProgramSetup({
         <div className="flex-1 p-6">
           {(() => {
             const step = STEPS[activeStep];
-            if (!step || !step.Component) return null;
-            const StepComponent = step.Component;
-            return (
-              <StepComponent
+            if (!step) return null;
+            return step.key === "brand" ? (
+              <BrandStep key={step.key} ref={brandRef} programId={params.id} />
+            ) : (
+              <RewardStep
                 key={step.key}
-                ref={stepRef}
+                ref={rewardRef}
                 programId={params.id}
                 scope={scope}
               />

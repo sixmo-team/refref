@@ -17,7 +17,6 @@ import {
   SelectValue,
 } from "@refref/ui/components/select";
 import { Switch } from "@refref/ui/components/switch";
-import { Slider } from "@refref/ui/components/slider";
 import { Separator } from "@refref/ui/components/separator";
 import { PreviewPane } from "@/components/preview-pane";
 import { api, type RouterInputs } from "@/trpc/react";
@@ -58,6 +57,16 @@ const defaultWidgetConfig: WidgetConfigType = {
   productName: "YourSaaS",
 };
 
+// Saved configurations hydrate against stable defaults, never an in-progress edit.
+const defaultThemeColors = {
+  primary: "#a995c9",
+  primaryForeground: "#1a1823",
+  secondary: "#5a5370",
+  secondaryForeground: "#e0ddef",
+  muted: "#f5f5f5",
+  mutedForeground: "#737373",
+};
+
 export function DesignConfig({ programId, scope }: DesignConfigProps) {
   // State for preview pane
   const [showPreview, setShowPreview] = useState(true);
@@ -73,22 +82,8 @@ export function DesignConfig({ programId, scope }: DesignConfigProps) {
   const [initialLandingPageUrl, setInitialLandingPageUrl] = useState("");
 
   // State for theme colors
-  const [themeColors, setThemeColors] = useState({
-    primary: "#a995c9",
-    primaryForeground: "#1a1823",
-    secondary: "#5a5370",
-    secondaryForeground: "#e0ddef",
-    muted: "#f5f5f5",
-    mutedForeground: "#737373",
-  });
-  const [initialThemeColors, setInitialThemeColors] = useState({
-    primary: "#a995c9",
-    primaryForeground: "#1a1823",
-    secondary: "#5a5370",
-    secondaryForeground: "#e0ddef",
-    muted: "#f5f5f5",
-    mutedForeground: "#737373",
-  });
+  const [themeColors, setThemeColors] = useState(defaultThemeColors);
+  const [initialThemeColors, setInitialThemeColors] = useState(defaultThemeColors);
 
   const query = api.program.getById.useQuery({ id: programId, scope });
   const program =
@@ -120,34 +115,29 @@ export function DesignConfig({ programId, scope }: DesignConfigProps) {
         setWidgetConfig(newConfig);
         setInitialConfig(newConfig);
 
-        // Load theme colors from cssVariables if they exist
-        if (newConfig.cssVariables) {
-          const loadedColors = {
-            primary: newConfig.cssVariables["--primary"] || themeColors.primary,
-            primaryForeground:
-              newConfig.cssVariables["--primary-foreground"] ||
-              themeColors.primaryForeground,
-            secondary:
-              newConfig.cssVariables["--secondary"] || themeColors.secondary,
-            secondaryForeground:
-              newConfig.cssVariables["--secondary-foreground"] ||
-              themeColors.secondaryForeground,
-            muted: newConfig.cssVariables["--muted"] || themeColors.muted,
-            mutedForeground:
-              newConfig.cssVariables["--muted-foreground"] ||
-              themeColors.mutedForeground,
-          };
-          setThemeColors(loadedColors);
-          setInitialThemeColors(loadedColors);
-        }
+        const loadedColors = {
+          primary: newConfig.cssVariables?.["--primary"] || defaultThemeColors.primary,
+          primaryForeground:
+            newConfig.cssVariables?.["--primary-foreground"] ||
+            defaultThemeColors.primaryForeground,
+          secondary:
+            newConfig.cssVariables?.["--secondary"] || defaultThemeColors.secondary,
+          secondaryForeground:
+            newConfig.cssVariables?.["--secondary-foreground"] ||
+            defaultThemeColors.secondaryForeground,
+          muted: newConfig.cssVariables?.["--muted"] || defaultThemeColors.muted,
+          mutedForeground:
+            newConfig.cssVariables?.["--muted-foreground"] ||
+            defaultThemeColors.mutedForeground,
+        };
+        setThemeColors(loadedColors);
+        setInitialThemeColors(loadedColors);
       }
 
       // Update landing page URL from brandConfig
-      const config = program.config as ProgramConfigV1Type;
-      if (config.brandConfig?.landingPageUrl) {
-        setLandingPageUrl(config.brandConfig.landingPageUrl);
-        setInitialLandingPageUrl(config.brandConfig.landingPageUrl);
-      }
+      const loadedLandingPageUrl = program.config.brandConfig?.landingPageUrl ?? "";
+      setLandingPageUrl(loadedLandingPageUrl);
+      setInitialLandingPageUrl(loadedLandingPageUrl);
     }
   }, [program?.config]);
 
@@ -242,7 +232,7 @@ export function DesignConfig({ programId, scope }: DesignConfigProps) {
             <CardHeader>
               <CardTitle>Theme</CardTitle>
               <CardDescription>
-                Customize your widget's color scheme
+                Customize your widget&apos;s color scheme
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

@@ -4,7 +4,6 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api, type RouterInputs, type RouterOutputs } from "@/trpc/react";
 import { getQueryKey } from "@trpc/react-query";
 import { SiteBreadcrumbs } from "@/components/site-breadcrumbs";
-import { EditableBreadcrumb } from "@/components/editable-breadcrumb";
 import { SiteHeader } from "@/components/site-header";
 import { SetupCard } from "@/components/program-setup-card";
 import { useSidebar } from "@refref/ui/components/sidebar";
@@ -13,6 +12,7 @@ import { DesignConfig } from "./_components/design-config";
 import { RewardStepConfig } from "./_components/reward-step-config";
 // import { NotificationSetup } from "./_components/notification-setup";
 import { Installation } from "./_components/installation";
+import { PartnerProgramSettings } from "./_components/partner-program-settings";
 import { canProceedToStep } from "@/lib/program";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -201,6 +201,13 @@ function ProgramEditor({
                 isActive={step === s.id}
               />
             ))}
+            <SetupCard
+              title="Партнёры"
+              isActive={step === "partners"}
+              onClick={() =>
+                router.push(`/programs/${program.id}?step=partners`)
+              }
+            />
           </div>
         </div>
         <div className="flex-1 flex flex-col overflow-y-auto ml-40">
@@ -218,6 +225,9 @@ function ProgramEditor({
           )} */}
           {step === "installation" && (
             <Installation programId={program.id} scope={scope} />
+          )}
+          {step === "partners" && (
+            <PartnerProgramSettings program={program} scope={scope} />
           )}
         </div>
       </div>

@@ -4,7 +4,7 @@ import {
   protectedProcedure,
   adminProcedure,
 } from "@/server/api/trpc";
-import { db, schema } from "@/server/db";
+import { schema } from "@/server/db";
 const {
   reward: rewardTable,
   participant,

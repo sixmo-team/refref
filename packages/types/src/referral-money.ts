@@ -12,15 +12,23 @@ function roundMinorHalfUp(numerator: bigint, denominator: bigint): number {
   return checkedMinor((numerator * 2n + denominator) / (denominator * 2n));
 }
 function legacyNumberRatio(value: number): [bigint, bigint] {
-  if (!Number.isFinite(value) || value < 0)
-    throw new Error("Invalid legacy amount");
-  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/.exec(String(value));
+  if (!Number.isFinite(value)) throw new Error("Invalid legacy amount");
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/.exec(
+    String(Math.abs(value)),
+  );
   if (!match) throw new Error("Invalid legacy decimal");
-  const digits = BigInt(match[1]! + (match[2] ?? ""));
+  const magnitude = BigInt(match[1]! + (match[2] ?? ""));
+  const digits = value < 0 ? -magnitude : magnitude;
   const exponent = Number(match[3] ?? 0) - (match[2]?.length ?? 0);
   return exponent >= 0
     ? [digits * 10n ** BigInt(exponent), 1n]
     : [digits, 10n ** BigInt(-exponent)];
+}
+function roundLegacyMinor(numerator: bigint, denominator: bigint): number {
+  // PostgreSQL numeric rounds signed ties away from zero, including V1 subcent amounts.
+  return numerator < 0n
+    ? -roundMinorHalfUp(-numerator, denominator)
+    : roundMinorHalfUp(numerator, denominator);
 }
 // V1 remains major-unit and accepts its original numeric precision; do not round the base first.
 export function legacyRewardMinor(
@@ -28,9 +36,13 @@ export function legacyRewardMinor(
   purchaseMajor?: number,
 ): number {
   const [n, d] = legacyNumberRatio(amount);
-  if (purchaseMajor === undefined) return roundMinorHalfUp(n * 100n, d);
+  if (purchaseMajor === undefined) return roundLegacyMinor(n * 100n, d);
   const [baseN, baseD] = legacyNumberRatio(purchaseMajor);
-  return roundMinorHalfUp(n * baseN, d * baseD);
+  return roundLegacyMinor(n * baseN, d * baseD);
+}
+export function legacyMinorToDecimal(value: number): string {
+  // Only V1 may be signed; retain the native decimal(10,2) bound on its magnitude.
+  return `${value < 0 ? "-" : ""}${minorToDecimal(Math.abs(value))}`;
 }
 export function checkedMinor(value: bigint | number): number {
   if (typeof value === "number" && !Number.isSafeInteger(value))

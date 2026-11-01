@@ -1,23 +1,5 @@
-import { z } from "zod";
+import type { NotificationConfigType } from "@refref/types";
 
-export const notificationConfigSchema = z.object({
-  welcomeEmail: z.object({
-    enabled: z.boolean(),
-    subject: z.string(),
-    template: z.string(),
-  }),
-  successEmail: z.object({
-    enabled: z.boolean(),
-    subject: z.string(),
-    template: z.string(),
-  }),
-  inApp: z.object({
-    progressUpdates: z.boolean(),
-    rewardNotifications: z.boolean(),
-  }),
-});
-
-export type NotificationConfigType = z.infer<typeof notificationConfigSchema>;
 
 export const defaultNotificationConfig: NotificationConfigType = {
   welcomeEmail: {

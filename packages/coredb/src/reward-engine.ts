@@ -12,6 +12,7 @@ import {
   minorToDecimal,
   percentOfMinor,
   legacyRewardMinor,
+  legacyMinorToDecimal,
   templateRequiresVerifiedPurchase,
   type ReferralSnapshotV1,
   type RewardRuleConfigV1Type,
@@ -20,6 +21,7 @@ import {
 export type CoreTransaction = Parameters<
   Parameters<DBType["transaction"]>[0]
 >[0];
+export type LegacyRewardSource = "api" | "web";
 function frozenCommissionMinor(
   snapshot: ReferralSnapshotV1,
   config: RewardRuleConfigV1Type,
@@ -60,11 +62,11 @@ function assertFrozenRewards(
 export async function processEventForRewards(
   db: DBType,
   eventId: string,
-  missingPercentageBase?: number,
+  legacySource: LegacyRewardSource,
 ) {
   try {
     return await db.transaction((tx) =>
-      processEventRewards(tx, eventId, undefined, missingPercentageBase),
+      processEventRewards(tx, eventId, undefined, legacySource),
     );
   } catch (error) {
     try {
@@ -88,7 +90,7 @@ export async function processEventRewards(
   tx: CoreTransaction,
   eventId: string,
   frozen?: ReferralSnapshotV1,
-  missingPercentageBase?: number,
+  legacySource?: LegacyRewardSource,
 ) {
   const [event] = await tx
     .select()
@@ -100,6 +102,8 @@ export async function processEventRewards(
   const metadata = eventMetadataSchema.parse(
     event.metadata ?? { schemaVersion: 1 },
   );
+  if (metadata.schemaVersion === 1 && !legacySource)
+    throw new Error("Legacy reward transport source required");
   if (
     frozen &&
     (metadata.schemaVersion !== 2 ||
@@ -181,10 +185,13 @@ export async function processEventRewards(
         : legacyRewardMinor(
             config.reward.amount,
             config.reward.unit === "percent"
-              ? metadata.orderAmount || missingPercentageBase
+              ? metadata.orderAmount || (legacySource === "api" ? 0 : undefined)
               : undefined,
           );
-    const amount = minorToDecimal(amountMinor);
+    const amount =
+      metadata.schemaVersion === 2
+        ? minorToDecimal(amountMinor)
+        : legacyMinorToDecimal(amountMinor);
     // Legacy engines issued USD for omitted or unsupported rule currencies.
     const configuredCurrency = currencySchema.safeParse(config.reward.currency);
     const currency = configuredCurrency.success
@@ -196,20 +203,21 @@ export async function processEventRewards(
       schemaVersion: 1,
       notes: `Generated from ${definition.name} event`,
     };
-    if (metadata.schemaVersion === 1 && config.reward.type === "discount") {
+    if (
+      metadata.schemaVersion === 1 &&
+      legacySource === "web" &&
+      config.reward.type === "discount"
+    ) {
       const validUntil = new Date();
-      validUntil.setUTCDate(
-        validUntil.getUTCDate() + (config.reward.validityDays ?? 30),
-      );
+      // V1 web coupon policy is unchanged; configured overrides need an explicit policy migration.
+      validUntil.setDate(validUntil.getDate() + 30);
       rewardMetadata.couponCode = `REF-${randomInt(36 ** 6)
         .toString(36)
         .padStart(6, "0")
         .toUpperCase()}`;
       rewardMetadata.validUntil = validUntil.toISOString();
-      const minimum =
-        config.reward.minPurchaseAmount ??
-        (config.reward.unit === "percent" ? 50 : undefined);
-      if (minimum !== undefined) rewardMetadata.minPurchaseAmount = minimum;
+      if (config.reward.unit === "percent")
+        rewardMetadata.minPurchaseAmount = 50;
     }
     await tx
       .insert(s.reward)

@@ -7,8 +7,8 @@ export interface ProgramConfig {
 }
 
 export interface ParsedProgramConfig {
-  notification: Record<string, any> | null;
-  reward: Record<string, any> | null;
+  notification: NonNullable<ProgramConfigV1Type["notification"]> | null;
+  reward: unknown;
   version: number;
 }
 
@@ -71,11 +71,21 @@ export function parseConfig(
     };
   }
 
+  const referralAction: unknown = config.actions?.find(
+    (action: unknown) =>
+      action !== null &&
+      typeof action === "object" &&
+      "actionId" in action &&
+      action.actionId === "referral",
+  );
   return {
     notification: config.notification ?? null,
     reward:
-      config.actions?.find((action) => action.actionId === "referral")
-        ?.reward ?? null,
+      referralAction !== null &&
+      typeof referralAction === "object" &&
+      "reward" in referralAction
+        ? referralAction.reward ?? null
+        : null,
     version: config.schemaVersion,
   };
 }
@@ -84,6 +94,11 @@ export function getSetupProgress(
   config: ProgramConfigV1Type | null | undefined,
 ): SetupProgress {
   const parsedConfig = parseConfig(config);
+  const notification = parsedConfig.notification;
+  const installation =
+    notification && typeof notification === "object" && "installation" in notification
+      ? notification.installation
+      : null;
 
   // Map steps with completion status
   const steps = SETUP_STEPS.map((step) => {
@@ -104,7 +119,12 @@ export function getSetupProgress(
       //   );
       //   break;
       case "installation":
-        isComplete = !!parsedConfig.notification?.installation?.completed;
+        isComplete = !!(
+          installation &&
+          typeof installation === "object" &&
+          "completed" in installation &&
+          installation.completed === true
+        );
         break;
     }
 

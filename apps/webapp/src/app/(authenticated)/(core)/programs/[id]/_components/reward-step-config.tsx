@@ -62,11 +62,22 @@ export function RewardStepConfig({
       void utils.program.getAll.invalidate();
     },
   });
-  const [reviewed, setReviewed] = React.useState(false);
+  const [reviewedVersion, setReviewedVersion] = React.useState<string | null>(
+    null,
+  );
   const [validationError, setValidationError] = React.useState<string | null>(
     null,
   );
   const [dates, setDates] = React.useState({ start: "", end: "" });
+  const reviewKey = JSON.stringify([
+    programQuery.data?.termsFingerprint,
+    programQuery.data?.startDate,
+    programQuery.data?.endDate,
+    dates.start,
+    dates.end,
+  ]);
+  const reviewed =
+    !!programQuery.data?.termsFingerprint && reviewedVersion === reviewKey;
   const approvalBusy = React.useRef(false);
   const values = React.useMemo<ProgramTemplateRewardStepV2Type>(() => {
     if (blocked) return DEFAULT_REWARD_FORM;
@@ -150,7 +161,7 @@ export function RewardStepConfig({
   React.useEffect(() => {
     if (blocked || !form.state.isDirty) form.reset(values);
     if (blocked) {
-      setReviewed(false);
+      setReviewedVersion(null);
       setDates({ start: "", end: "" });
       setValidationError(null);
     }
@@ -217,6 +228,14 @@ export function RewardStepConfig({
                 <code>{programQuery.data.termsFingerprint}</code>; status:{" "}
                 {programQuery.data.status}
               </p>
+              <p>
+                Saved period:{" "}
+                {programQuery.data.startDate?.toLocaleString() ??
+                  "no start limit"}
+                {" — "}
+                {programQuery.data.endDate?.toLocaleString() ?? "no end limit"}.
+                Leave a date blank to keep its saved value.
+              </p>
               <label className="block">
                 Explicit program start (local; required for a validity period)
                 <Input
@@ -241,7 +260,9 @@ export function RewardStepConfig({
                 <input
                   type="checkbox"
                   checked={reviewed}
-                  onChange={(e) => setReviewed(e.target.checked)}
+                  onChange={(e) =>
+                    setReviewedVersion(e.target.checked ? reviewKey : null)
+                  }
                 />
                 I have explicit business approval for these saved rates,
                 dates/minimums, commission basis, edge examples and the
@@ -251,6 +272,7 @@ export function RewardStepConfig({
                 disabled={!reviewed || approve.isPending}
                 onClick={() => {
                   if (
+                    !reviewed ||
                     blocked ||
                     approvalBusy.current ||
                     !programQuery.data?.termsFingerprint
@@ -263,6 +285,12 @@ export function RewardStepConfig({
                         productId: programQuery.data.productId,
                         programId,
                         termsFingerprint: programQuery.data.termsFingerprint,
+                        reviewedPeriod: {
+                          startDate:
+                            programQuery.data.startDate?.toISOString() ?? null,
+                          endDate:
+                            programQuery.data.endDate?.toISOString() ?? null,
+                        },
                         calculationVersion: 1,
                         edgeExamplesApproved: true,
                         ownershipPolicyVerified: true,
@@ -275,7 +303,7 @@ export function RewardStepConfig({
                       },
                       {
                         onSuccess: () => {
-                          setReviewed(false);
+                          setReviewedVersion(null);
                         },
                         onError: (error) =>
                           toast.error(error.message || "Approval failed"),

@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-  socialPlatformSchema,
-  widgetConfigSchema,
-  WidgetConfigType,
-  widgetPositionSchema,
-} from "./widget-config";
+import type { WidgetConfigType } from "./widget-config";
 
 export * from "./program-config";
 export * from "./program-template-steps";
@@ -16,6 +11,7 @@ export * from "./reward-config";
 export * from "./referral-contract";
 export * from "./referral-money";
 export * from "./template-rewards";
+export * from "./partner-program";
 
 export const referralLinkSchema = z.object({
   code: z.string(),

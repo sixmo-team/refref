@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, schema } from "@refref/coredb";
 import { getAuth } from "@refref/auth";
 import { hashPassword } from "better-auth/crypto";
+import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { and, eq, inArray } from "drizzle-orm";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
@@ -63,7 +64,6 @@ process.env.BETTER_AUTH_SECRET =
 const db = createDb(url);
 const auth = getAuth({
   baseURL: "http://localhost:4000",
-  resendApiKey: "debug_key",
   db,
   schema,
   enabledSocialAuth: [],
@@ -637,20 +637,32 @@ describe.sequential(
         .where(eq(schema.invitation.id, ids.invitation));
       expect(invite?.status).toBe("pending");
     });
-    it("fails missing mail configuration before fetch without logging recipient or bearer URL", async () => {
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockRejectedValue(new Error("Network disabled in regression"));
+    it("accepts an auth-mail request but blocks unconfigured transport and redacts failure diagnostics", async () => {
+      const sendSpy = vi
+        .spyOn(SESv2Client.prototype, "send")
+        .mockRejectedValue(new Error("Unexpected outbound auth mail"));
+      const diagnostics = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       try {
-        await expect(
-          auth.api.signInMagicLink({
-            headers,
-            body: { email: `owner-${id}@example.test` },
-          }),
-        ).rejects.toThrow();
-        expect(fetchSpy).not.toHaveBeenCalled();
+        const response = await auth.api.signInMagicLink({
+          headers,
+          body: { email: `owner-${id}@example.test` },
+        });
+        expect(response).toEqual({ status: true });
+        await vi.waitFor(() =>
+          expect(diagnostics.mock.calls).toContainEqual([
+            expect.any(String),
+            { level: "error" },
+          ]),
+        );
+        expect(sendSpy).not.toHaveBeenCalled();
+        const logged = JSON.stringify(diagnostics.mock.calls);
+        expect(logged).not.toContain(`owner-${id}@example.test`);
+        expect(logged).not.toContain("token=");
       } finally {
-        fetchSpy.mockRestore();
+        sendSpy.mockRestore();
+        diagnostics.mockRestore();
       }
     });
     it("organization key cannot fetch a foreign program or write a foreign product/program", async () => {
@@ -734,8 +746,8 @@ describe.sequential(
       ]);
       expect(retries.map((r) => r.json().eventId)).toEqual([eventId, eventId]);
       await Promise.all([
-        processEventForRewards(db, eventId),
-        processEventForRewards(db, eventId),
+        processEventForRewards(db, eventId, "api"),
+        processEventForRewards(db, eventId, "api"),
       ]);
       const rewards = await db
         .select()
@@ -814,6 +826,38 @@ describe.sequential(
       expect((await request()).statusCode).toBe(200);
       expect((await request()).statusCode).toBe(429);
     });
+    it("preserves the advertised two-year key lifetime through the real SDK and persisted verification", async () => {
+      const twoYears = 2 * 365 * 24 * 60 * 60;
+      const created = await caller(routers.keys).create({
+        name: "Two-year integration",
+        expiresIn: twoYears,
+      });
+      expect(created.expiresAt?.getTime()).toBeGreaterThan(
+        Date.now() + (twoYears - 60) * 1000,
+      );
+      const verification = await auth.api.verifyApiKey({
+        body: { key: created.key },
+      });
+      expect(verification.valid).toBe(true);
+      expect(verification.key?.metadata).toMatchObject({
+        organizationId: ids.orgA,
+      });
+    });
+    it("returns client errors for native SDK name and expiry validation without minting keys", async () => {
+      const original = await caller(routers.keys).list();
+      for (const input of [
+        { name: "x".repeat(33) },
+        { name: "Too short expiry", expiresIn: 1 },
+        { name: "Too long expiry", expiresIn: 2 * 365 * 24 * 60 * 60 + 1 },
+      ]) {
+        await expect(caller(routers.keys).create(input)).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+        });
+      }
+      expect((await caller(routers.keys).list()).map((key) => key.id)).toEqual(
+        original.map((key) => key.id),
+      );
+    });
     it("keeps query values and rejected participant PII out of real application logs", async () => {
       const oldDatabaseUrl = process.env.DATABASE_URL;
       const oldLogLevel = process.env.LOG_LEVEL;
@@ -882,19 +926,28 @@ describe.sequential(
     it("changes email only after the replacement mailbox verifies its token", async () => {
       const emailAuth = getAuth({
         baseURL: "http://localhost:4000",
-        resendApiKey: "re_regression_only",
+        postbox: {
+          from: "auth@example.test",
+          credentials: {
+            accessKeyId: "isolated-test-key",
+            secretAccessKey: "isolated-test-secret",
+          },
+        },
         db,
         schema,
         enabledSocialAuth: [],
         enablePasswordAuth: true,
         enableMagicLinkAuth: false,
       });
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify({ id: "regression-email" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+      let sentCommand: SendEmailCommand | undefined;
+      const sendSpy = vi
+        .spyOn(SESv2Client.prototype, "send")
+        .mockImplementation(async (command) => {
+          if (!(command instanceof SendEmailCommand))
+            throw new Error("Unexpected email command");
+          sentCommand = command;
+          return { $metadata: {}, MessageId: "regression-email" };
+        });
       try {
         const replacement = `replacement-${id}@example.test`;
         await emailAuth.api.changeEmail({
@@ -909,9 +962,15 @@ describe.sequential(
               .where(eq(schema.user.id, ids.owner))
           )[0]?.email,
         ).toBe(`owner-${id}@example.test`);
-        const sentBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
-        expect(sentBody.to).toContain(replacement);
-        const token = /[?&]token=([^&"]+)/.exec(sentBody.html)?.[1];
+        await vi.waitFor(() =>
+          expect(sentCommand?.input.Destination?.ToAddresses).toContain(
+            replacement,
+          ),
+        );
+        const sentBody = sentCommand?.input;
+        const token = /[?&]token=([^&"]+)/.exec(
+          sentBody?.Content?.Simple?.Body?.Html?.Data ?? "",
+        )?.[1];
         expect(token).toBeTruthy();
         await emailAuth.api.verifyEmail({
           query: { token: decodeURIComponent(token!) },
@@ -923,7 +982,7 @@ describe.sequential(
         expect(verified?.email).toBe(replacement);
         expect(verified?.emailVerified).toBe(true);
       } finally {
-        fetchSpy.mockRestore();
+        sendSpy.mockRestore();
       }
     });
     it("does not expose SQL parameters in server caller exceptions", async () => {

@@ -10,6 +10,7 @@ import {
   percentOfMinor,
   buyerDiscountMinor,
   legacyRewardMinor,
+  checkedMinor,
   programTemplateRewardStepSchemaV2,
 } from "@refref/types";
 
@@ -124,6 +125,10 @@ describe("first payment native contracts", () => {
     expect(() => decimalToMinor("0.001")).toThrow();
     expect(() => percentOfMinor(100, "1e2")).toThrow();
     expect(() => decimalToMinor("100000000.00")).toThrow();
+    expect(() => decimalToMinor("-1.25")).toThrow();
+    expect(() => checkedMinor(-125)).toThrow();
+    expect(() => minorToDecimal(-125)).toThrow();
+    expect(() => percentOfMinor(-125, "50")).toThrow();
   });
   it("keeps valid no-discount and minimum-unmet attribution independent of commission", () => {
     expect(buyerDiscountMinor({ kind: "none" }, 100)).toBe(0);

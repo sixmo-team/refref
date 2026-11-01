@@ -29,7 +29,7 @@ interface BrandStepProps {
 export const BrandStep = forwardRef<
   { submitForm: () => Promise<BrandStepData> },
   BrandStepProps
->(({ programId }, ref) => {
+>((_props, ref) => {
   const [landingPageUrl, setLandingPageUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#3b82f6");
 

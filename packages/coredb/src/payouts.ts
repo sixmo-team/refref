@@ -2,8 +2,14 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { DBType } from "./index.js";
 import type { CoreTransaction } from "./reward-engine.js";
 import * as s from "./schema.js";
-import { checkedMinor, currencySchema, type CurrencyType } from "@refref/types";
-import { ReferralError } from "./referrals.js";
+import {
+  checkedMinor,
+  currencySchema,
+  payoutRecipientInputSchema,
+  type CurrencyType,
+  type PayoutRecipientInput,
+} from "@refref/types";
+import { ReferralError, verifiedPersonAccount } from "./referrals.js";
 
 export async function lockParticipantCurrency(
   tx: CoreTransaction,
@@ -59,17 +65,22 @@ export async function participantBalances(
     const earned = earnings.find((row) => row.currency === currency);
     const paid = payouts.find((row) => row.currency === currency);
     // sum(numeric)*100 is exact; PostgreSQL may emit a trailing .00, not binary floating point.
-    const eligibleMinor = checkedMinor(
-      BigInt((earned?.minor ?? "0").split(".")[0]!),
-    );
+    const earnedMinor = BigInt((earned?.minor ?? "0").split(".")[0]!);
+    const eligibleMinor =
+      earnedMinor < 0n
+        ? -checkedMinor(-earnedMinor)
+        : checkedMinor(earnedMinor);
     const reservedMinor = checkedMinor(BigInt(paid?.reserved ?? "0"));
     const completedMinor = checkedMinor(BigInt(paid?.completed ?? "0"));
+    const available =
+      earnedMinor - BigInt(reservedMinor) - BigInt(completedMinor);
     return {
       currency,
       eligibleMinor,
       reservedMinor,
       completedMinor,
-      availableMinor: eligibleMinor - reservedMinor - completedMinor,
+      availableMinor:
+        available < 0n ? -checkedMinor(-available) : checkedMinor(available),
     };
   });
 }
@@ -88,27 +99,13 @@ export async function ownParticipant(
       ),
     )
     .limit(1);
-  if (
-    !owner?.ownershipVerifiedAt ||
-    !owner.ownershipVerifiedBy ||
-    !owner.ownershipEvidence ||
-    !owner.payoutRecipient
-  )
+  if (!owner?.ownershipVerifiedAt || !owner.ownershipVerifiedBy)
     throw new ReferralError(
       "FORBIDDEN",
       403,
       "Verified participant ownership required",
     );
-  const [account] = await db
-    .select({ verified: s.user.emailVerified, role: s.user.role })
-    .from(s.user)
-    .where(eq(s.user.id, userId));
-  if (!account?.verified || account.role === "service")
-    throw new ReferralError(
-      "FORBIDDEN",
-      403,
-      "Verified person account required",
-    );
+  await verifiedPersonAccount(db, userId);
   return owner;
 }
 export async function requestParticipantPayout(
@@ -119,8 +116,10 @@ export async function requestParticipantPayout(
     currency: CurrencyType;
     amountMinor: number;
     idempotencyKey: string;
+    recipient: PayoutRecipientInput;
   },
 ) {
+  const recipient = payoutRecipientInputSchema.parse(input.recipient);
   return db.transaction(async (tx) => {
     const owner = await ownParticipant(tx, userId, input.productId);
     await tx.execute(
@@ -146,7 +145,9 @@ export async function requestParticipantPayout(
       if (
         prior.amountMinor !== input.amountMinor ||
         prior.currency !== input.currency ||
-        prior.requestedBy !== userId
+        prior.requestedBy !== userId ||
+        prior.recipient.name !== recipient.name ||
+        prior.recipient.details !== recipient.details
       )
         throw new ReferralError(
           "PAYOUT_CONFLICT",
@@ -171,6 +172,18 @@ export async function requestParticipantPayout(
         409,
         "Insufficient approved available earnings",
       );
+    const recipientSnapshot = {
+      ...recipient,
+      providedBy: userId,
+      providedAt: new Date().toISOString(),
+    };
+    await tx
+      .update(s.participant)
+      .set({
+        payoutRecipient: recipientSnapshot,
+        updatedAt: new Date(),
+      })
+      .where(eq(s.participant.id, owner.id));
     const [created] = await tx
       .insert(s.payout)
       .values({
@@ -179,7 +192,7 @@ export async function requestParticipantPayout(
         currency: input.currency,
         amountMinor: amount,
         requestedBy: userId,
-        recipient: owner.payoutRecipient!,
+        recipient: recipientSnapshot,
         idempotencyKey: input.idempotencyKey,
         status: "requested",
         audit: [
@@ -497,7 +510,10 @@ export async function updateRewardApproval(
           currency.data,
         ])
       )[0]!;
-      if (balance.availableMinor < 0)
+      if (
+        balance.availableMinor < 0 &&
+        (balance.reservedMinor > 0 || balance.completedMinor > 0)
+      )
         throw new ReferralError(
           "PAYOUT_CONFLICT",
           409,

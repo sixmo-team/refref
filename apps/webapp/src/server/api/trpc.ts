@@ -12,11 +12,10 @@ import { ZodError } from "zod";
 
 import { db, schema } from "@/server/db";
 import { logger } from "@/lib/logger";
-import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { safeError } from "@refref/utils";
-import { ReferralError } from "@refref/coredb";
+import { ReferralError, verifiedPersonAccount } from "@refref/coredb";
 import { isAPIError } from "better-auth/api";
 import { SecurityError } from "@refref/coredb/security";
 
@@ -129,6 +128,12 @@ export const publicProcedure = t.procedure.use(async ({ next }) => {
   const result = await next();
   if (!result.ok && result.error.code === "INTERNAL_SERVER_ERROR") {
     const cause = result.error.cause;
+    if (isAPIError(cause) && cause.statusCode === 400) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: cause.message,
+      });
+    }
     if (cause instanceof ReferralError || cause instanceof SecurityError) {
       throw new TRPCError({
         code:
@@ -159,6 +164,7 @@ export const onboardingProcedure = publicProcedure.use(
     if (!ctx.session || !ctx.userId) {
       throw new TRPCError({ code: "UNAUTHORIZED" });
     }
+    await verifiedPersonAccount(ctx.db, ctx.userId);
     return next({
       ctx: {
         session: ctx.session,
@@ -169,32 +175,30 @@ export const onboardingProcedure = publicProcedure.use(
 );
 
 //! these require the presence of an active organization id and active product
-export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
-  // check both cause ts :)
-  if (!ctx.session || !ctx.userId) {
-    throw new TRPCError({ code: "UNAUTHORIZED" });
-  }
-  if (!ctx.activeOrganizationId || !ctx.organizationUserId) {
-    throw new TRPCError({ code: "FORBIDDEN" });
-  }
-  if (!ctx.activeProductId) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "No product found. Please complete onboarding.",
-    });
-  }
+export const protectedProcedure = onboardingProcedure.use(
+  async ({ ctx, next }) => {
+    if (!ctx.activeOrganizationId || !ctx.organizationUserId) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    if (!ctx.activeProductId) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "No product found. Please complete onboarding.",
+      });
+    }
 
-  return next({
-    ctx: {
-      session: ctx.session,
-      activeOrganizationId: ctx.activeOrganizationId,
-      organizationUserId: ctx.organizationUserId,
-      organizationUserRole: ctx.organizationUserRole,
-      activeProductId: ctx.activeProductId,
-      userId: ctx.userId,
-    },
-  });
-});
+    return next({
+      ctx: {
+        session: ctx.session,
+        activeOrganizationId: ctx.activeOrganizationId,
+        organizationUserId: ctx.organizationUserId,
+        organizationUserRole: ctx.organizationUserRole,
+        activeProductId: ctx.activeProductId,
+        userId: ctx.userId,
+      },
+    });
+  },
+);
 
 export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   if (

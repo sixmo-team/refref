@@ -1,12 +1,13 @@
 import { Filter } from "bad-words";
+import { inputRefcodeSchema } from "@refref/types";
 
 /**
  * Refcode and Reflink utilities for generating and validating referral codes
  *
  * RefRef supports two separate but related concepts:
  *
- * 1. **Refcodes**: Auto-generated, globally unique tracking codes
- *    - Format: 7 characters (numbers + lowercase letters only)
+ * 1. **Refcodes**: Globally unique tracking codes, suggested or chosen by their owner
+ *    - Format: 3–32 ASCII letters/digits, stored in lowercase
  *    - Example: abc1234
  *    - URL Pattern: REFERRAL_HOST_URL/:code
  *    - Use Case: Core referral tracking codes for participants
@@ -76,8 +77,22 @@ export function generateRefcode(maxAttempts: number = 5): string | null {
   return null;
 }
 
-// Keep the old function name for backward compatibility (deprecated)
-export const generateGlobalCode = generateRefcode;
+/** Validate creation input without replacing a user's chosen text. */
+export function validateRefcode(code: string): {
+  isValid: boolean;
+  error?: string;
+} {
+  const parsed = inputRefcodeSchema.safeParse(code);
+  if (!parsed.success)
+    return {
+      isValid: false,
+      error:
+        "Используйте 3–32 латинские буквы или цифры; health зарезервирован.",
+    };
+  if (filter.isProfane(parsed.data))
+    return { isValid: false, error: "Этот текст промокода недопустим." };
+  return { isValid: true };
+}
 
 /**
  * Validates a user-specified vanity code
@@ -154,8 +169,8 @@ export function normalizeCode(code: string): string {
 /**
  * Checks if a code appears to be a refcode based on format
  *
- * Note: This is a heuristic check. Refcodes are exactly 7 characters of
- * numbers and lowercase letters (after normalization).
+ * Validates the shared 3–32-character input format before normalization, including
+ * reserved routes; this is separate from vanity-slug validation.
  *
  * @param code - The code to check
  * @returns True if code matches refcode format
@@ -168,12 +183,5 @@ export function normalizeCode(code: string): string {
  * // Returns: false
  */
 export function isRefcodeFormat(code: string): boolean {
-  const normalizedCode = normalizeCode(code);
-  return (
-    normalizedCode.length === REFCODE_LENGTH &&
-    /^[a-z0-9]+$/.test(normalizedCode)
-  );
+  return inputRefcodeSchema.safeParse(code).success;
 }
-
-// Keep the old function name for backward compatibility (deprecated)
-export const isGlobalCodeFormat = isRefcodeFormat;

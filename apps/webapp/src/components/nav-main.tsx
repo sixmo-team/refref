@@ -1,15 +1,12 @@
 "use client";
 
 import {
-  IconCirclePlusFilled,
-  IconMail,
   IconSearch,
   type Icon,
 } from "@tabler/icons-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { Button } from "@refref/ui/components/button";
 import {
   SidebarGroup,
   SidebarGroupContent,

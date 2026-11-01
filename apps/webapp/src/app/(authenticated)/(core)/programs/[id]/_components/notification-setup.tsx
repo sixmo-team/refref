@@ -58,7 +58,7 @@ export function NotificationSetup({
           id: programId,
           config: {
             ...program.config,
-            notification: value.notificationConfig as any,
+            notification: value.notificationConfig,
           },
         },
         {
@@ -82,26 +82,6 @@ export function NotificationSetup({
     }
   }, [program?.config?.notification, form]);
 
-  // Helper function to update nested notification config
-  const updateNotificationConfig = (path: string[], value: any) => {
-    const currentConfig = form.getFieldValue("notificationConfig");
-    let updated = { ...currentConfig };
-    let current: any = updated;
-
-    for (let i = 0; i < path.length - 1; i++) {
-      const key = path[i];
-      if (key) {
-        current[key] = { ...current[key] };
-        current = current[key];
-      }
-    }
-    const lastKey = path[path.length - 1];
-    if (lastKey) {
-      current[lastKey] = value;
-    }
-
-    form.setFieldValue("notificationConfig", updated);
-  };
 
   // Get current notification config from form
   const notificationConfig = form.state.values.notificationConfig;
@@ -137,10 +117,7 @@ export function NotificationSetup({
                   <Switch
                     checked={notificationConfig.welcomeEmail.enabled}
                     onCheckedChange={(checked) =>
-                      updateNotificationConfig(
-                        ["welcomeEmail", "enabled"],
-                        checked,
-                      )
+                      form.setFieldValue("notificationConfig.welcomeEmail.enabled", checked)
                     }
                   />
                 </div>
@@ -150,10 +127,7 @@ export function NotificationSetup({
                     placeholder="Welcome to our referral program!"
                     value={notificationConfig.welcomeEmail.subject}
                     onChange={(e) =>
-                      updateNotificationConfig(
-                        ["welcomeEmail", "subject"],
-                        e.target.value,
-                      )
+                      form.setFieldValue("notificationConfig.welcomeEmail.subject", e.target.value)
                     }
                   />
                 </div>
@@ -164,10 +138,7 @@ export function NotificationSetup({
                     className="min-h-[100px]"
                     value={notificationConfig.welcomeEmail.template}
                     onChange={(e) =>
-                      updateNotificationConfig(
-                        ["welcomeEmail", "template"],
-                        e.target.value,
-                      )
+                      form.setFieldValue("notificationConfig.welcomeEmail.template", e.target.value)
                     }
                   />
                 </div>
@@ -184,10 +155,7 @@ export function NotificationSetup({
                   <Switch
                     checked={notificationConfig.successEmail.enabled}
                     onCheckedChange={(checked) =>
-                      updateNotificationConfig(
-                        ["successEmail", "enabled"],
-                        checked,
-                      )
+                      form.setFieldValue("notificationConfig.successEmail.enabled", checked)
                     }
                   />
                 </div>
@@ -197,10 +165,7 @@ export function NotificationSetup({
                     placeholder="Congratulations on your successful referral!"
                     value={notificationConfig.successEmail.subject}
                     onChange={(e) =>
-                      updateNotificationConfig(
-                        ["successEmail", "subject"],
-                        e.target.value,
-                      )
+                      form.setFieldValue("notificationConfig.successEmail.subject", e.target.value)
                     }
                   />
                 </div>
@@ -211,10 +176,7 @@ export function NotificationSetup({
                     className="min-h-[100px]"
                     value={notificationConfig.successEmail.template}
                     onChange={(e) =>
-                      updateNotificationConfig(
-                        ["successEmail", "template"],
-                        e.target.value,
-                      )
+                      form.setFieldValue("notificationConfig.successEmail.template", e.target.value)
                     }
                   />
                 </div>
@@ -240,10 +202,7 @@ export function NotificationSetup({
                 <Switch
                   checked={notificationConfig.inApp.progressUpdates}
                   onCheckedChange={(checked) =>
-                    updateNotificationConfig(
-                      ["inApp", "progressUpdates"],
-                      checked,
-                    )
+                    form.setFieldValue("notificationConfig.inApp.progressUpdates", checked)
                   }
                 />
               </div>
@@ -257,10 +216,7 @@ export function NotificationSetup({
                 <Switch
                   checked={notificationConfig.inApp.rewardNotifications}
                   onCheckedChange={(checked) =>
-                    updateNotificationConfig(
-                      ["inApp", "rewardNotifications"],
-                      checked,
-                    )
+                    form.setFieldValue("notificationConfig.inApp.rewardNotifications", checked)
                   }
                 />
               </div>
