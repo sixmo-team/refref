@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { getSession, getUserById } from "@/lib/state";
 import {
   getRefRefConfig,
-  getRefRefConfigSync,
+  type RefRefRuntimeConfig,
 } from "@/lib/refref-runtime-config";
 
 /**
@@ -43,7 +43,7 @@ export async function GET() {
 
     // Get RefRef configuration
     // Try to read from cookies directly first (for test scenarios)
-    let config: any;
+    let config: RefRefRuntimeConfig;
     try {
       const configCookie = cookieStore.get("refref-config");
       const secretCookie = cookieStore.get("refref-secret");
@@ -66,7 +66,7 @@ export async function GET() {
           programId: config.programId,
         });
       }
-    } catch (e) {
+    } catch {
       // If cookie reading fails, use regular config
       config = await getRefRefConfig();
       console.log("RefRef config from fallback:", {

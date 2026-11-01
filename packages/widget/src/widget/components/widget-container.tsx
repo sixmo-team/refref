@@ -9,13 +9,20 @@ export function WidgetContainer() {
 
   useEffect(() => {
     if (!initialized) return;
+    const triggers = new Set<Element>();
+    const openWidget = () => setIsOpen(true);
     // Setup data attribute triggers
     const setupTriggers = () => {
       if (!widgetElementSelector) return;
+      for (const element of triggers) {
+        if (element.isConnected) continue;
+        element.removeEventListener("click", openWidget);
+        triggers.delete(element);
+      }
       document.querySelectorAll(widgetElementSelector).forEach((element) => {
-        element.addEventListener("click", () => {
-          setIsOpen(true);
-        });
+        if (triggers.has(element)) return;
+        element.addEventListener("click", openWidget);
+        triggers.add(element);
       });
     };
 
@@ -25,8 +32,11 @@ export function WidgetContainer() {
 
     return () => {
       observer.disconnect();
+      for (const element of triggers) {
+        element.removeEventListener("click", openWidget);
+      }
     };
-  }, [initialized, widgetElementSelector]);
+  }, [initialized, widgetElementSelector, setIsOpen]);
 
   if (!initialized) {
     return null;

@@ -37,7 +37,7 @@ export default function LoginPage() {
 
       // Redirect to dashboard after successful login
       router.push("/dashboard");
-    } catch (err) {
+    } catch {
       setError("Network error. Please try again.");
       setLoading(false);
     }
@@ -131,7 +131,7 @@ export default function LoginPage() {
 
       <div style={{ marginTop: "20px", textAlign: "center" }}>
         <a href="/signup" style={{ color: "#0070f3" }}>
-          Don't have an account? Sign up
+          Don&apos;t have an account? Sign up
         </a>
       </div>
     </div>

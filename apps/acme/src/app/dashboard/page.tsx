@@ -169,11 +169,14 @@ export default function DashboardPage() {
               });
 
               // Initialize window.RefRef array if it doesn't exist
-              (window as any).RefRef = (window as any).RefRef || [];
+              const refRefWindow: Window & {
+                RefRef?: { push(command: [string, unknown]): unknown };
+              } = window;
+              refRefWindow.RefRef = refRefWindow.RefRef || [];
 
               // Initialize widget using push pattern (queue-based)
               // Note: participantId is not sent to backend - the JWT 'sub' field contains the external user ID
-              (window as any).RefRef.push([
+              refRefWindow.RefRef.push([
                 "init",
                 {
                   productId,

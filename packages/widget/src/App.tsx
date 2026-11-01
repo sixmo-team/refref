@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { WidgetContainer } from "./widget/components/widget-container";
 import { widgetStore } from "./lib/store";
 import { defaultConfig } from "./lib/config";
-import { DEFAULT_WIDGET_CSS_VARS } from "@refref/types";
+import { DEFAULT_WIDGET_CSS_VARS, widgetConfigSchema, type WidgetConfigType } from "@refref/types";
 
 function App() {
   const [configJson, setConfigJson] = useState(
@@ -20,11 +20,11 @@ function App() {
   );
 
   const [error, setError] = useState<string | null>(null);
-  const [parsedConfig, setParsedConfig] = useState<any>(null);
+  const [parsedConfig, setParsedConfig] = useState<WidgetConfigType | null>(null);
 
   useEffect(() => {
     try {
-      const parsed = JSON.parse(configJson);
+      const parsed = widgetConfigSchema.parse(JSON.parse(configJson));
       setParsedConfig(parsed);
       widgetStore.setState({
         initialized: true,
@@ -32,7 +32,7 @@ function App() {
       });
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [configJson]);
 
@@ -41,7 +41,7 @@ function App() {
       const parsed = JSON.parse(configJson);
       setConfigJson(JSON.stringify(parsed, null, 2));
       setError(null);
-    } catch (e) {
+    } catch {
       // Ignore format errors if JSON is invalid
     }
   };

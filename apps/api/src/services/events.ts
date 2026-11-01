@@ -7,6 +7,6 @@ import { processEventForRewards } from "@refref/coredb";
  */
 export async function createEvent(db: DBType, input: EventInput) {
   const newEvent = await insertScopedEvent(db, input);
-  await processEventForRewards(db, newEvent.id, 0);
+  await processEventForRewards(db, newEvent.id, "api");
   return newEvent;
 }

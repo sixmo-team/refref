@@ -64,7 +64,7 @@ export class ProgramSetupPage extends BasePage {
 
     // Extract program ID from URL (/programs/{id}/setup)
     const url = this.page.url();
-    const match = url.match(/\/programs\/([^\/]+)\/setup/);
+    const match = url.match(/\/programs\/([^/]+)\/setup/);
     if (!match?.[1])
       throw new Error("Created program ID is missing from setup URL");
     const programId = match[1];
@@ -87,7 +87,7 @@ export class ProgramSetupPage extends BasePage {
     console.log("Retrieving integration credentials...");
 
     // Ensure we're on a program detail page (not setup)
-    await expect(this.page).toHaveURL(/\/programs\/[^\/]+$/);
+    await expect(this.page).toHaveURL(/\/programs\/[^/]+$/);
 
     // Wait for credentials card title to be visible
     const credentialsTitle = this.page.locator("text=Installation Credentials");
@@ -179,7 +179,7 @@ export class ProgramSetupPage extends BasePage {
     await completeButton.click();
 
     // Wait for redirect to program page (not setup page)
-    await this.page.waitForURL(/\/programs\/[^\/]+$/, {
+    await this.page.waitForURL(/\/programs\/[^/]+$/, {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });

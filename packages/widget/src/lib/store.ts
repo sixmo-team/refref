@@ -1,6 +1,5 @@
 import { createStore } from "zustand/vanilla";
-import { create } from "zustand";
-import { WidgetConfigType, WidgetStore } from "@refref/types";
+import type { WidgetStore } from "@refref/types";
 import { defaultConfig } from "./config";
 
 export const widgetStore = createStore<WidgetStore>((set) => ({

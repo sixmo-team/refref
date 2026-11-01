@@ -19,7 +19,7 @@ export class ServerManager {
         signal: AbortSignal.timeout(2000), // 2 second timeout
       });
       return response.ok;
-    } catch (error) {
+    } catch {
       // Fall back to checking root path
       try {
         await fetch(`http://localhost:${port}/`, {
@@ -56,7 +56,7 @@ export class ServerManager {
           console.log(`✓ Server at ${url} is ready`);
           return;
         }
-      } catch (error) {
+      } catch {
         // Try root path as fallback
         try {
           await fetch(`${url}/`, {
@@ -148,7 +148,7 @@ export class ServerManager {
 
         return { healthy: true, message: "OK" };
       }
-    } catch (healthError) {
+    } catch {
       // /health endpoint failed or doesn't exist, try root path
     }
 

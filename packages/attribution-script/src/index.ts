@@ -52,7 +52,7 @@ function getCookieOptionsFromScriptTag(): CookieOptions | undefined {
     if (jsonString) {
       try {
         return JSON.parse(jsonString) as CookieOptions;
-      } catch (error) {
+      } catch {
         console.warn("Failed to parse data-cookie-options JSON; using defaults");
       }
     }

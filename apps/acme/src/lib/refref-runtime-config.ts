@@ -3,7 +3,7 @@
  * This allows tests to dynamically configure ACME with RefRef credentials
  */
 
-interface RefRefRuntimeConfig {
+export interface RefRefRuntimeConfig {
   productId: string;
   clientId: string;
   clientSecret: string;

@@ -18,7 +18,6 @@ export interface ReferralWidgetContentProps {
 
 export function ReferralWidgetContent({
   config,
-  onClose,
 }: ReferralWidgetContentProps) {
   const [copied, setCopied] = useState(false);
 

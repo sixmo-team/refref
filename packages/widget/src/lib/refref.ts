@@ -1,10 +1,9 @@
 import {
-  WidgetConfigType,
-  WidgetInitRequestType,
-  WidgetInitResponseType,
+  widgetConfigSchema,
+  type WidgetConfigType,
+  type WidgetInitRequestType,
 } from "@refref/types";
-import { widgetStore } from "@/lib/store";
-import { defaultConfig } from "@/lib/config";
+import { widgetStore } from "./store";
 
 export interface RefRef {
   init: (params: {
@@ -13,6 +12,7 @@ export interface RefRef {
     token?: string;
     demo?: boolean;
     apiUrl?: string;
+    programId?: string;
   }) => Promise<void>;
   open: () => void;
   close: () => void;
@@ -20,6 +20,12 @@ export interface RefRef {
   isOpen: boolean;
   setConfig: (config: Partial<WidgetConfigType>) => void;
   getConfig: () => WidgetConfigType;
+}
+
+export type RefRefCommand = [keyof RefRef, ...unknown[]];
+
+export interface RefRefClient extends RefRef {
+  push: (command: RefRefCommand) => void;
 }
 
 // Helper function to safely parse cookies
@@ -89,13 +95,18 @@ class RefRefImpl implements RefRef {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to initialize widget");
+        const error: unknown = await response.json();
+        throw new Error(
+          typeof error === "object" && error !== null &&
+          "error" in error && typeof error.error === "string"
+            ? error.error || "Failed to initialize widget"
+            : "Failed to initialize widget",
+        );
       }
 
-      const data = (await response.json()) as WidgetInitResponseType;
+      const data = widgetConfigSchema.parse(await response.json());
 
-      this.store.setState((state) => ({
+      this.store.setState({
         initialized: true,
         token,
         participantId,
@@ -103,7 +114,7 @@ class RefRefImpl implements RefRef {
         config: {
           ...data,
         },
-      }));
+      });
 
 
       // this.setConfig(data);
@@ -145,53 +156,64 @@ class RefRefImpl implements RefRef {
 
 declare global {
   interface Window {
-    RefRef: any;
+    RefRef: RefRefClient | RefRefCommand[];
   }
 }
 
 // Store the real API instance and command queue
 let refRefApi: RefRef | null = null;
-const commandQueue: Array<[keyof RefRef | "push", ...any[]]> = Array.isArray(
+const commandQueue: RefRefCommand[] = Array.isArray(
   window.RefRef,
 )
   ? window.RefRef
   : [];
 
 // Proxy handler to support both .push and method calls
-const handler: ProxyHandler<any> = {
-  get(_target, prop) {
-    if (prop === "push") {
-      return (cmd: [keyof RefRef, ...any[]]) => {
-        if (refRefApi && typeof refRefApi[cmd[0]] === "function") {
-          (refRefApi as any)[cmd[0]](...cmd.slice(1));
-        } else {
-          commandQueue.push(cmd);
-        }
-      };
+const target: RefRefClient = Object.assign(RefRefImpl.getInstance(), {
+  push(command: RefRefCommand) {
+    const [method, ...args] = command;
+    const fn = refRefApi?.[method];
+    if (typeof fn === "function") {
+      return Reflect.apply(fn, refRefApi, args);
     }
-    // If API is ready and method exists, call it
-    if (refRefApi && typeof refRefApi[prop as keyof RefRef] === "function") {
-      return (...args: any[]) => (refRefApi as any)[prop](...args);
-    }
-    // Otherwise, queue the command
-    return (...args: any[]) => {
-      commandQueue.push([prop as keyof RefRef, ...args]);
-    };
+    commandQueue.push(command);
   },
-  // Support property access for isOpen/getConfig
+});
+
+const handler: ProxyHandler<RefRefClient> = {
+  get(_target, prop) {
+    switch (prop) {
+      case "push":
+        return target.push;
+      case "isOpen":
+        return refRefApi?.isOpen ?? false;
+      case "init":
+      case "open":
+      case "close":
+      case "toggle":
+      case "setConfig":
+      case "getConfig":
+        if (refRefApi) return refRefApi[prop].bind(refRefApi);
+        return (...args: unknown[]) => {
+          commandQueue.push([prop, ...args]);
+        };
+      default:
+        return undefined;
+    }
+  },
   getOwnPropertyDescriptor(_target, prop) {
     if (refRefApi && (prop === "isOpen" || prop === "getConfig")) {
       return {
         configurable: true,
         enumerable: true,
-        value: (refRefApi as any)[prop],
+        value: refRefApi[prop],
       };
     }
     return undefined;
   },
 };
 
-window.RefRef = new Proxy({}, handler);
+window.RefRef = new Proxy(target, handler);
 
 export const initRefRef = () => {
   const refRef = RefRefImpl.getInstance();
@@ -199,8 +221,9 @@ export const initRefRef = () => {
   // Process any queued commands
   while (commandQueue.length > 0) {
     const [method, ...args] = commandQueue.shift()!;
-    if (typeof (refRef as any)[method] === "function") {
-      (refRef as any)[method](...args);
+    const fn = refRef[method];
+    if (typeof fn === "function") {
+      Reflect.apply(fn, refRef, args);
     }
   }
   return refRef;

@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { getTestConfig } from "../../utils/config";
+import { AcmeSignupPage } from "../pages/acme/acme-signup-page";
+import { AcmePurchasePage } from "../pages/acme/acme-purchase-page";
 
 const config = getTestConfig();
 
@@ -57,14 +59,10 @@ test.describe("ACME Authentication Flow", () => {
     await expect(page).toHaveTitle(/ACME/);
     console.log("✓ Signup page loaded");
 
-    // Step 2: Fill out signup form
-    await page.getByTestId("acme-signup-name").fill(johnUser.name);
-    await page.getByTestId("acme-signup-email").fill(johnUser.email);
-    await page.getByTestId("acme-signup-password").fill(johnUser.password);
+    // Steps 2–3: Fill and submit the signup form
+    await new AcmeSignupPage(page).signup(johnUser.name, johnUser.email, johnUser.password);
     console.log("✓ Signup form filled");
 
-    // Step 3: Submit signup form
-    await page.getByTestId("acme-signup-submit").click();
     console.log("✓ Signup form submitted");
 
     // Step 4: Verify redirect to dashboard
@@ -162,5 +160,16 @@ test.describe("ACME Authentication Flow", () => {
     console.log("✓ Error message shown for duplicate email");
 
     console.log("\n=== Duplicate Signup Test Complete ===\n");
+  });
+
+  test("completes an available plan purchase through the ACME page objects", async ({ page }) => {
+    const signup = new AcmeSignupPage(page);
+    await signup.goto("/signup");
+    await signup.signup("Plan Buyer", "plan-buyer@example.com");
+    const purchase = new AcmePurchasePage(page);
+    await purchase.goto();
+    await expect(purchase.completePurchase(29.991)).rejects.toThrow(/No ACME plan has the requested price/);
+    await purchase.completePurchase(29.99);
+    await expect(page.getByTestId("acme-dashboard-content")).toContainText("plan-buyer@example.com");
   });
 });

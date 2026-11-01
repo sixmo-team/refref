@@ -6,7 +6,7 @@ import { env } from "@/env";
 
 declare global {
   interface Window {
-    RefRef: Array<[string, any]>;
+    RefRef: Array<[string, unknown]>;
   }
 }
 

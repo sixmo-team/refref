@@ -64,14 +64,13 @@ describe("RefRef Attribution Script - End-to-End Tests", () => {
     if (window.RefRefAttribution) {
       try {
         window.RefRefAttribution.stopObserver();
-      } catch (e) {
+      } catch {
         // Ignore errors if already stopped
       }
     }
 
     // Reset window.RefRefAttribution
-    // @ts-ignore
-    delete window.RefRefAttribution;
+    Reflect.deleteProperty(window, "RefRefAttribution");
 
     // Reset modules to allow fresh initialization
     vi.resetModules();
@@ -95,7 +94,7 @@ describe("RefRef Attribution Script - End-to-End Tests", () => {
     if (window.RefRefAttribution) {
       try {
         window.RefRefAttribution.stopObserver();
-      } catch (e) {
+      } catch {
         // Ignore errors
       }
     }

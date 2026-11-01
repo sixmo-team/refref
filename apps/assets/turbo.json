@@ -1,0 +1,8 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "outputs": ["public/attribution.v1.js", "public/widget.v1.js"]
+    }
+  }
+}

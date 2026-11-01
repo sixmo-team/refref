@@ -101,7 +101,7 @@ async function copyScript(config: (typeof SCRIPTS)[0]): Promise<BuildStats> {
   // Check if source exists
   try {
     await stat(config.sourcePath);
-  } catch (error) {
+  } catch {
     throw new Error(
       `Source file not found: ${config.sourcePath}\nMake sure to build the ${config.name} package first.`,
     );

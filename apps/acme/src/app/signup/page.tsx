@@ -42,7 +42,7 @@ export default function SignupPage() {
 
       // Redirect to dashboard after successful signup
       router.push("/dashboard");
-    } catch (err) {
+    } catch {
       setError("Network error. Please try again.");
       setLoading(false);
     }

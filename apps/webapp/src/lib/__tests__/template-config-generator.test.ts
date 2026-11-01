@@ -254,6 +254,17 @@ describe("Template Config Generator", () => {
         expect(resultConsumer.enabledPlatforms.instagram).toBe(true);
         expect(resultConsumer.enabledPlatforms.linkedin).toBe(false);
       });
+      it("uses the default platforms for an unrecognized audience", () => {
+        const brand = { primaryColor: "#000000" };
+        const defaults = generateWidgetConfigFromTemplate(brand);
+        const custom = generateWidgetConfigFromTemplate(
+          brand,
+          undefined,
+          "App",
+          { targetAudience: "custom-segment" },
+        );
+        expect(custom.enabledPlatforms).toEqual(defaults.enabledPlatforms);
+      });
     });
   });
 

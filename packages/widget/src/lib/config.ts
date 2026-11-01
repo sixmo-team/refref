@@ -20,14 +20,3 @@ export const defaultConfig: WidgetConfigType = {
   referralLink: "https://i.refref.ai/<ref_code>",
   productName: "YourSaaS",
 };
-
-export async function fetchConfig(
-  clientKey: string,
-): Promise<WidgetConfigType> {
-  // TODO: Replace with actual API call
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // resolve(defaultConfig);
-    }, 500);
-  });
-}

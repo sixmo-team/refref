@@ -104,9 +104,10 @@ paths:
         - Tracking
       summary: resolveReferralCode
       description: >-
-        Read-only business lookup. Normalizes trim/lowercase seven-character alphanumeric code, not vanity URL. No
-        participant/referral/event/reward writes. Approved G1/G2 terms and independently verified native account
-        ownership required. One response contains independent discount and frozen cash commission specs; no buyer PII.
+        Read-only business lookup. Normalizes trim/lowercase 3–32 ASCII letters/digits; health is reserved. No
+        participant/referral/event/reward writes. Approved G1/G2 terms and verified native account ownership required;
+        self-service participants must accept current published rules. No bank details are needed for code resolution.
+        One response contains independent discount and frozen cash commission specs; no buyer PII.
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -512,7 +513,7 @@ components:
           pattern: ^[A-Za-z0-9_-]+$
         canonicalCode:
           type: string
-          pattern: ^[a-z0-9]{7}$
+          pattern: ^(?!health$)[a-z0-9]{3,32}$
         productId:
           type: string
           minLength: 1
@@ -581,7 +582,7 @@ components:
         code:
           type: string
           maxLength: 64
-          pattern: ^\s*[A-Za-z0-9]{7}\s*$
+          pattern: ^(?!\s*[hH][eE][aA][lL][tT][hH]\s*$)\s*[A-Za-z0-9]{3,32}\s*$
       required:
         - productId
         - programId
@@ -627,7 +628,7 @@ components:
               pattern: ^[A-Za-z0-9_-]+$
             codeValue:
               type: string
-              pattern: ^[a-z0-9]{7}$
+              pattern: ^(?!health$)[a-z0-9]{3,32}$
             referrerParticipantId:
               type: string
               minLength: 1

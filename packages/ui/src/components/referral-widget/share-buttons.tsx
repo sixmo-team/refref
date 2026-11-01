@@ -72,7 +72,7 @@ const platformConfig: Record<SocialPlatform, PlatformConfig> = {
     Icon: FaInstagram,
     label: "Share on Instagram",
     color: "#E4405F",
-    getUrl: (link: string, message: string) => `https://www.instagram.com/`,
+    getUrl: () => `https://www.instagram.com/`,
   },
   telegram: {
     Icon: FaTelegram,
@@ -105,7 +105,7 @@ export function ShareButtons({ config, referralLink }: ShareButtonsProps) {
   };
 
   const enabledPlatforms = Object.entries(config.enabledPlatforms)
-    .filter(([_, enabled]) => enabled)
+    .filter(([, enabled]) => enabled)
     .map(([platform]) => platform as SocialPlatform);
 
   return (

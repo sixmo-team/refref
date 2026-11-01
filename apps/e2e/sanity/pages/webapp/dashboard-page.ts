@@ -93,7 +93,7 @@ export class DashboardPage extends BasePage {
 
     // Extract program ID from URL
     const url = this.page.url();
-    const match = url.match(/\/programs\/([^\/]+)/);
+    const match = url.match(/\/programs\/([^/]+)/);
     const programId = match ? match[1] : null;
 
     console.log(`✓ Navigated to program: ${programId}`);

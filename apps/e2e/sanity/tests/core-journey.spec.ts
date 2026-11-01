@@ -5,6 +5,7 @@ import { LoginPage } from "../pages/webapp/login-page";
 import { OnboardingPage } from "../pages/webapp/onboarding-page";
 import { ProgramSetupPage } from "../pages/webapp/program-setup-page";
 import { DashboardPage } from "../pages/webapp/dashboard-page";
+import { AcmeSignupPage } from "../pages/acme/acme-signup-page";
 import { testData } from "../fixtures/test-data";
 import { getTestConfig } from "../../utils/config";
 
@@ -424,10 +425,7 @@ test.describe("RefRef Core User Journey", () => {
 
       while (retries > 0 && !visitSuccess) {
         try {
-          await janePage.goto(referralUrl, {
-            waitUntil: "domcontentloaded",
-            timeout: 10000,
-          });
+          await new AcmeSignupPage(janePage).gotoWithReferralLink(referralUrl);
           visitSuccess = true;
         } catch (error) {
           retries--;

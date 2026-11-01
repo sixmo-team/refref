@@ -1,9 +1,8 @@
-import { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { AcmeBasePage } from "./acme-base-page";
 
 /**
  * Page object for Acme app purchase flow
- * TODO: Implement in Task 3
  */
 export class AcmePurchasePage extends AcmeBasePage {
   constructor(page: Page) {
@@ -19,19 +18,28 @@ export class AcmePurchasePage extends AcmeBasePage {
 
   /**
    * Complete a purchase
-   * TODO: Implement in Task 3
    */
   async completePurchase(amount: number) {
-    // TODO: Implement in Task 3
-    throw new Error("Not implemented");
+    const products = this.page.locator('[data-testid^="product-"]');
+    await expect(products.first()).toBeVisible();
+    const prices = await products.locator("p").allTextContents();
+    const index = prices.findIndex((text) => {
+      const price = text.match(/^\s*\$(\d+(?:\.\d+)?)\s*\/mo\s*$/);
+      return price !== null && Number(price[1]) === amount;
+    });
+    expect(index, `No ACME plan has the requested price ${amount}`).toBeGreaterThanOrEqual(0);
+    const product = products.nth(index);
+    const name = await product.getByRole("heading", { level: 2 }).innerText();
+    const [message] = await Promise.all([
+      this.page.waitForEvent("dialog").then(async (dialog) => {
+        const message = dialog.message();
+        await dialog.accept();
+        return message;
+      }),
+      product.getByRole("button", { name: "Purchase", exact: true }).click(),
+    ]);
+    expect(message).toBe(`Successfully purchased ${name}!`);
+    await expect(this.page).toHaveURL(`${this.baseUrl}/dashboard`);
   }
 
-  /**
-   * Verify purchase event was tracked
-   * TODO: Implement in Task 3
-   */
-  async verifyPurchaseTracked() {
-    // TODO: Implement in Task 3
-    throw new Error("Not implemented");
-  }
 }

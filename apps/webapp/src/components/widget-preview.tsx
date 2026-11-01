@@ -45,7 +45,7 @@ export function WidgetPreview({
             style.textContent = cssText;
             shadowRef.current.appendChild(style);
           }
-        } catch (e) {
+        } catch {
           // CORS issues with external stylesheets - try to clone the link element
           if (sheet.href) {
             const link = document.createElement("link");
@@ -73,7 +73,7 @@ export function WidgetPreview({
 
         // Set adopted stylesheets (only CSS variables, no parent styles)
         shadowRef.current.adoptedStyleSheets = [varsSheet];
-      } catch (e) {
+      } catch {
         // Fallback: create a style element if adoptedStyleSheets not supported
         const style = document.createElement("style");
         const cssVars = Object.entries(mergedCssVars)

@@ -8,7 +8,7 @@ import {
   type WidgetInitResponseType,
 } from "@refref/types";
 import { createEvent } from "../../../services/events.js";
-import { generateGlobalCode, normalizeCode } from "@refref/utils";
+import { generateRefcode, normalizeCode } from "@refref/utils";
 
 import { validateEventScope, SecurityError } from "@refref/coredb/security";
 export default async function widgetInitRoutes(fastify: FastifyInstance) {
@@ -192,7 +192,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
 
         if (!refcodeRecord) {
           // Generate global code with profanity filtering (up to 5 attempts)
-          let currentCode = generateGlobalCode(5);
+          let currentCode = generateRefcode(5);
 
           if (!currentCode) {
             return reply.code(500).send({
@@ -227,7 +227,7 @@ export default async function widgetInitRoutes(fastify: FastifyInstance) {
                 );
 
                 // Generate a new code for next retry
-                const newCode = generateGlobalCode(5);
+                const newCode = generateRefcode(5);
                 if (!newCode) {
                   break;
                 }

@@ -43,7 +43,6 @@ function formatCurrencyValue(
  */
 function generateWidgetTitle(
   rewardConfig: RewardConfigType | undefined,
-  productName: string,
 ): string {
   if (!rewardConfig) {
     return "Invite your friends";
@@ -100,7 +99,6 @@ function generateShareMessage(
  */
 function generateWidgetSubtitle(
   rewardConfig: RewardConfigType | undefined,
-  productName: string,
 ): string {
   if (!rewardConfig) {
     return "Share your referral link and earn rewards when your friends join!";
@@ -188,19 +186,18 @@ function selectWidgetIcon(
  * Selects appropriate social platforms based on target audience
  */
 function selectPlatformsForAudience(targetAudience: string | undefined) {
-  if (!targetAudience) {
-    return {
-      facebook: true,
-      twitter: true,
-      linkedin: true,
-      whatsapp: true,
-      email: true,
-      instagram: false,
-      telegram: false,
-    };
-  }
+  const defaultPlatforms: WidgetConfigType["enabledPlatforms"] = {
+    facebook: true,
+    twitter: true,
+    linkedin: true,
+    whatsapp: true,
+    email: true,
+    instagram: false,
+    telegram: false,
+  };
+  if (!targetAudience) return defaultPlatforms;
 
-  const audienceMap: { [key: string]: any } = {
+  const audienceMap: Record<string, WidgetConfigType["enabledPlatforms"]> = {
     professional: {
       facebook: false,
       twitter: true,
@@ -230,7 +227,7 @@ function selectPlatformsForAudience(targetAudience: string | undefined) {
     },
   };
 
-  return audienceMap[targetAudience] || audienceMap.default;
+  return audienceMap[targetAudience] || defaultPlatforms;
 }
 
 /**
@@ -243,8 +240,8 @@ export function generateWidgetConfigFromTemplate(
   productMetadata?: ProductMetadata,
 ): WidgetConfigType {
   // Generate all dynamic content
-  const title = generateWidgetTitle(rewardConfig, productName);
-  const subtitle = generateWidgetSubtitle(rewardConfig, productName);
+  const title = generateWidgetTitle(rewardConfig);
+  const subtitle = generateWidgetSubtitle(rewardConfig);
   const shareMessage = generateShareMessage(rewardConfig, productName);
   const triggerText = generateTriggerText(rewardConfig);
   const icon = selectWidgetIcon(rewardConfig);

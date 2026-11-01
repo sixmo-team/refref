@@ -1,11 +1,11 @@
-import { RefRef } from "./refref";
+import type { RefRef, RefRefCommand } from "./refref";
 
 /**
  * Command queue interface for storing and processing RefRef commands
  */
 interface Command {
   method: keyof RefRef;
-  args: any[];
+  args: unknown[];
 }
 
 /**
@@ -41,17 +41,17 @@ class CommandQueue {
 
   private constructor() {
     // Get the existing RefRef array if it exists
-    const existingQueue = Array.isArray(window.RefRef) ? window.RefRef : [];
+    const existingQueue: RefRefCommand[] = Array.isArray(window.RefRef) ? window.RefRef : [];
 
     // Process any commands that were queued before script load
     existingQueue.forEach(([method, args]) => {
       // If args is not an array, wrap it in an array
-      const argsArray = Array.isArray(args) ? args : [args];
-      this.enqueue(method as keyof RefRef, ...argsArray);
+      const argsArray: unknown[] = Array.isArray(args) ? args : [args];
+      this.enqueue(method, ...argsArray);
     });
 
     // Replace the array with the actual RefRef object
-    delete (window as any).RefRef;
+    Reflect.deleteProperty(window, "RefRef");
   }
 
   static getInstance(): CommandQueue {
@@ -79,7 +79,7 @@ class CommandQueue {
    * @param method The RefRef method to call
    * @param args The arguments to pass to the method
    */
-  enqueue(method: keyof RefRef, ...args: any[]) {
+  enqueue(method: keyof RefRef, ...args: unknown[]) {
     this.queue.push({ method, args });
     if (this.isInitialized) {
       this.processQueue();
@@ -98,8 +98,8 @@ class CommandQueue {
 
       if (typeof fn === "function") {
         try {
-          await (fn as Function).call(this.refRef, ...args);
-        } catch (error) {
+          await Reflect.apply(fn, this.refRef, args);
+        } catch {
           console.error("RefRef command execution failed");
         }
       }

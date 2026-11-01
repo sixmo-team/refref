@@ -38,7 +38,7 @@ function setupWidget() {
         unsubscribe();
       }
     });
-  } catch (error) {
+  } catch {
     console.warn("Widget setup failed");
   }
 }
@@ -132,7 +132,7 @@ function mountWidget() {
 
     document.body.appendChild(shadowHost);
 
-  } catch (error) {
+  } catch {
     console.warn("Widget mounting failed");
   }
 }
