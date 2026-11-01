@@ -17,14 +17,14 @@ export const env = createEnv({
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
-    RESEND_API_KEY: z.string().optional(),
+    REFREF_POSTBOX_FROM: z.string().min(1).optional(),
+    REFREF_POSTBOX_ACCESS_KEY_ID: z.string().min(1).optional(),
+    REFREF_POSTBOX_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    REFREF_POSTBOX_SESSION_TOKEN: z.string().min(1).optional(),
     GOOGLE_CLIENT_ID: z.string().min(1).default("google_client_id"),
     GOOGLE_CLIENT_SECRET: z.string().min(1).default("google_client_secret"),
     REFERRAL_PROGRAM_CLIENT_ID: z.string().optional(),
     REFERRAL_PROGRAM_CLIENT_SECRET: z.string().optional(),
-    NOTIFICATIONS_EMAIL_FROM: z
-      .string()
-      .default("RefRef <notifications@mail.refref.ai>"),
   },
 
   /**
@@ -70,7 +70,11 @@ export const env = createEnv({
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     DISABLE_SIGN_UP: process.env.DISABLE_SIGN_UP,
-    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    REFREF_POSTBOX_FROM: process.env.REFREF_POSTBOX_FROM,
+    REFREF_POSTBOX_ACCESS_KEY_ID: process.env.REFREF_POSTBOX_ACCESS_KEY_ID,
+    REFREF_POSTBOX_SECRET_ACCESS_KEY:
+      process.env.REFREF_POSTBOX_SECRET_ACCESS_KEY,
+    REFREF_POSTBOX_SESSION_TOKEN: process.env.REFREF_POSTBOX_SESSION_TOKEN,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_REFER_URL: process.env.NEXT_PUBLIC_REFER_URL,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
@@ -85,7 +89,6 @@ export const env = createEnv({
       process.env.NEXT_PUBLIC_ENABLE_MAGIC_LINK_AUTH,
     NEXT_PUBLIC_ENABLED_SOCIAL_AUTH:
       process.env.NEXT_PUBLIC_ENABLED_SOCIAL_AUTH,
-    NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

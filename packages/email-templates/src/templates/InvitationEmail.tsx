@@ -52,7 +52,7 @@ export function InvitationEmail({
           `}
         </style>
       </Head>
-      <Preview>You've been invited to join RefRef</Preview>
+      <Preview>You&apos;ve been invited to join RefRef</Preview>
       <Body
         style={{
           backgroundColor: "#fafafa",
@@ -108,7 +108,7 @@ export function InvitationEmail({
               }}
               className="dark-text"
             >
-              You've been invited to RefRef
+              You&apos;ve been invited to RefRef
             </Heading>
 
             <Text
@@ -229,7 +229,7 @@ export function InvitationEmail({
               }}
               className="dark-text-muted"
             >
-              If you didn't expect this invitation, you can safely ignore it.
+              If you didn&apos;t expect this invitation, you can safely ignore it.
             </Text>
             <Text
               style={{

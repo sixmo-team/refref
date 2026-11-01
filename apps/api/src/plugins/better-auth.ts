@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
-import { getAuth } from "@refref/auth";
+import { getAuth, postboxConfigFromEnv } from "@refref/auth";
 import { schema, type DBType } from "@refref/coredb";
 import { and, eq } from "drizzle-orm";
 
@@ -46,7 +46,7 @@ const betterAuthPlugin = fp(
     // Create Better Auth instance using shared @refref/auth package
     const auth = getAuth({
       baseURL: process.env.APP_URL || "http://localhost:4000",
-      resendApiKey: process.env.RESEND_API_KEY || "",
+      postbox: postboxConfigFromEnv(process.env),
       db: opts.db,
       schema,
       enabledSocialAuth: [],

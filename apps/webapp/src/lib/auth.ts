@@ -1,4 +1,4 @@
-import { getAuth } from "@refref/auth";
+import { getAuth, postboxConfigFromEnv } from "@refref/auth";
 import { db, schema } from "@/server/db";
 import { env } from "@/env";
 import { logger } from "@/lib/logger";
@@ -6,7 +6,7 @@ import { logger } from "@/lib/logger";
 // Create auth instance using the factory function from @refref/auth
 export const auth = getAuth({
   baseURL: env.NEXT_PUBLIC_APP_URL,
-  resendApiKey: env.RESEND_API_KEY || "",
+  postbox: postboxConfigFromEnv(env),
   db,
   schema,
   enabledSocialAuth: env.NEXT_PUBLIC_ENABLED_SOCIAL_AUTH,
@@ -21,5 +21,4 @@ export const auth = getAuth({
     : undefined,
   logger,
   trustedOrigins: [env.NEXT_PUBLIC_APP_URL],
-  emailFrom: env.NOTIFICATIONS_EMAIL_FROM,
 });

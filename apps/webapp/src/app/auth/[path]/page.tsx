@@ -1,6 +1,9 @@
 import { AuthView } from "@daveyplate/better-auth-ui";
 import { authViewPaths } from "@daveyplate/better-auth-ui/server";
 import Image from "next/image";
+import Link from "next/link";
+import { getAuthReturnPath } from "@refref/auth/return";
+import { VerificationForm } from "./verification-form";
 
 export const dynamicParams = false;
 
@@ -10,16 +13,52 @@ export function generateStaticParams() {
 
 export default async function AuthPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ path: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { path } = await params;
+  const query = await searchParams;
+  const redirectTo = getAuthReturnPath(query.redirectTo) ?? "/";
+  if (query.redirectTo !== undefined && !getAuthReturnPath(query.redirectTo)) {
+    return (
+      <main className="p-8">
+        <p role="alert">Invalid authentication return destination.</p>
+        <Link href="/auth/sign-in">Sign in to RefRef</Link>
+      </main>
+    );
+  }
+  if (path === authViewPaths.EMAIL_VERIFICATION) {
+    return (
+      <main className="flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <VerificationForm
+            callbackURL={redirectTo}
+            initialEmail={typeof query.email === "string" ? query.email : ""}
+          />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center p-4">
       <div className="w-full max-w-md">
         <AuthView
           path={path}
+          redirectTo={redirectTo}
+          callbackURL={redirectTo}
+          cardFooter={
+            path === authViewPaths.SIGN_IN || path === authViewPaths.SIGN_UP ? (
+              <Link
+                className="text-sm underline"
+                href={`/auth/email-verification?redirectTo=${encodeURIComponent(redirectTo)}`}
+              >
+                Need a new verification email?
+              </Link>
+            ) : undefined
+          }
           cardHeader={
             <div className="mb-8 flex flex-col items-center gap-4">
               <Image

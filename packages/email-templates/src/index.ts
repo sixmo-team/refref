@@ -1,6 +1,10 @@
 import * as React from "react";
 import { MagicLinkEmail } from "./templates/MagicLinkEmail.js";
 import { InvitationEmail } from "./templates/InvitationEmail.js";
+import {
+  VerificationEmail,
+  ResetPasswordEmail,
+} from "./templates/AccountEmail.js";
 import { renderEmail } from "./utils/render.js";
 
 /**
@@ -26,6 +30,18 @@ export async function renderInvitationEmail(params: {
   return await renderEmail(React.createElement(InvitationEmail, params));
 }
 
+export async function renderVerificationEmail(url: string): Promise<string> {
+  return await renderEmail(React.createElement(VerificationEmail, { url }));
+}
+
+export async function renderResetPasswordEmail(url: string): Promise<string> {
+  return await renderEmail(React.createElement(ResetPasswordEmail, { url }));
+}
+
 // Export the template components for advanced use cases
 export { MagicLinkEmail } from "./templates/MagicLinkEmail.js";
 export { InvitationEmail } from "./templates/InvitationEmail.js";
+export {
+  VerificationEmail,
+  ResetPasswordEmail,
+} from "./templates/AccountEmail.js";

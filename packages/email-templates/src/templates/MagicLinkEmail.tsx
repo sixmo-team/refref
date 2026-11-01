@@ -193,7 +193,7 @@ export function MagicLinkEmail({
               }}
               className="dark-text-muted"
             >
-              If you didn't request this email, you can safely ignore it.
+              If you didn&apos;t request this email, you can safely ignore it.
             </Text>
             <Text
               style={{

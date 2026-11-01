@@ -1,18 +1,12 @@
 import { betterAuth } from "better-auth";
 import type {
   Auth as BetterAuthInstance,
-  BaseSession,
-  BaseUser,
   BetterAuthOptions,
-  BetterAuthRateLimitRule,
-  StandardSchemaV1,
-  StrictEndpoint,
 } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink, organization } from "better-auth/plugins";
 import type {
   DefaultOrganizationPlugin,
-  MagicLinkOptions,
   OrganizationOptions,
 } from "better-auth/plugins";
 import { apiKey } from "@better-auth/api-key";
@@ -25,56 +19,18 @@ import {
 import {
   renderMagicLinkEmail,
   renderInvitationEmail,
+  renderVerificationEmail,
+  renderResetPasswordEmail,
 } from "@refref/email-templates";
 import type { DBType, schema as databaseSchema } from "@refref/coredb";
-import { Resend } from "resend";
+import { sendPostboxEmail, type PostboxConfig } from "./postbox.js";
+import { SESv2Client } from "@aws-sdk/client-sesv2";
+import { validateAuthCallback } from "./return.js";
+export { postboxConfigFromEnv } from "./postbox.js";
+export type { PostboxConfig } from "./postbox.js";
 import { eq, and, inArray } from "drizzle-orm";
 
-interface MagicLinkSignInInput {
-  email: string;
-  name?: string;
-  callbackURL?: string;
-  newUserCallbackURL?: string;
-  errorCallbackURL?: string;
-  metadata?: Record<string, unknown>;
-}
-
-interface MagicLinkVerifyQuery {
-  token: string;
-  callbackURL?: string;
-  errorCallbackURL?: string;
-  newUserCallbackURL?: string;
-}
-
-// The SDK has no named magic-link result type; retain its public endpoint contract.
-interface RefRefMagicLinkPlugin {
-  id: "magic-link";
-  version: string;
-  options: MagicLinkOptions;
-  rateLimit: (BetterAuthRateLimitRule & {
-    pathMatcher(path: string): boolean;
-  })[];
-  endpoints: {
-    signInMagicLink: StrictEndpoint<
-      "/sign-in/magic-link",
-      {
-        method: "POST";
-        requireHeaders: true;
-        body: StandardSchemaV1<MagicLinkSignInInput, MagicLinkSignInInput>;
-      },
-      { status: boolean }
-    >;
-    magicLinkVerify: StrictEndpoint<
-      "/magic-link/verify",
-      {
-        method: "GET";
-        requireHeaders: true;
-        query: StandardSchemaV1<MagicLinkVerifyQuery, MagicLinkVerifyQuery>;
-      },
-      { token: string; user: BaseUser; session: BaseSession }
-    >;
-  };
-}
+type RefRefMagicLinkPlugin = ReturnType<typeof magicLink>;
 
 type RefRefBasePlugins = [
   DefaultOrganizationPlugin<OrganizationOptions>,
@@ -93,10 +49,8 @@ export interface AuthConfig {
    */
   baseURL: string;
 
-  /**
-   * Resend API key for sending emails
-   */
-  resendApiKey: string;
+  /** Independent RefRef mail configuration; absent configuration fails only on actual sends. */
+  postbox?: PostboxConfig;
 
   /**
    * Database instance
@@ -144,11 +98,6 @@ export interface AuthConfig {
    * Trusted origins for CORS
    */
   trustedOrigins?: string[];
-
-  /**
-   * Email address to use as the sender for notifications
-   */
-  emailFrom?: string;
 }
 
 /**
@@ -157,7 +106,7 @@ export interface AuthConfig {
 export function getAuth(config: AuthConfig): RefRefAuth {
   const {
     baseURL,
-    resendApiKey,
+    postbox,
     db,
     schema,
     enabledSocialAuth,
@@ -167,8 +116,12 @@ export function getAuth(config: AuthConfig): RefRefAuth {
     google,
     logger,
     trustedOrigins = [baseURL],
-    emailFrom = "RefRef <notifications@mail.refref.ai>",
   } = config;
+  const emailClient = new SESv2Client({
+    endpoint: "https://postbox.cloud.yandex.net",
+    region: "ru-central1",
+    ...(postbox?.credentials ? { credentials: postbox.credentials } : {}),
+  });
 
   // Build social providers object dynamically based on enabled providers
   const socialProviders = enabledSocialAuth.reduce(
@@ -188,35 +141,47 @@ export function getAuth(config: AuthConfig): RefRefAuth {
     {} as Record<string, { clientId: string; clientSecret: string }>,
   );
 
-  function mailer() {
-    if (!resendApiKey || resendApiKey === "debug_key") {
-      throw new Error("Email delivery is not configured");
-    }
-    return new Resend(resendApiKey);
+  async function sendLink(
+    email: string,
+    url: string,
+    purpose: "verification" | "reset" | "magic-link",
+  ) {
+    const subject =
+      purpose === "verification"
+        ? "Verify your email address"
+        : purpose === "reset"
+          ? "Reset your password"
+          : "Your Magic Link to Sign In";
+    const html =
+      purpose === "verification"
+        ? await renderVerificationEmail(url)
+        : purpose === "reset"
+          ? await renderResetPasswordEmail(url)
+          : await renderMagicLinkEmail(url);
+    await sendPostboxEmail(emailClient, postbox, { to: email, subject, html });
   }
-  async function sendLink(email: string, url: string, subject: string) {
-    const sender = mailer();
-    const html = await renderMagicLinkEmail(url);
-    const result = await sender.emails.send({
-      from: emailFrom,
-      to: email,
-      subject,
-      html,
-    });
-    if (result.error) throw new Error("Email delivery failed");
-  }
+  const authLogger = {
+    level: "warn",
+    log: (level) => {
+      if (logger) logger.error("Authentication diagnostic", { level });
+      else console.error("Authentication diagnostic", { level });
+    },
+  } satisfies NonNullable<BetterAuthOptions["logger"]>;
+  const backgroundTasks = {
+    // ponytail: long-lived Node owns these tasks; use platform waitUntil for serverless.
+    handler: (task: Promise<unknown>) => {
+      void task.catch(() => authLogger.log("error"));
+    },
+  };
 
   return betterAuth<RefRefAuthOptions>({
-    logger: {
-      level: "warn",
-      log: (level) => {
-        if (logger) logger.error("Authentication diagnostic", { level });
-        else console.error("Authentication diagnostic", { level });
-      },
-    },
+    logger: authLogger,
     baseURL,
     telemetry: { enabled: false },
-    advanced: { cookiePrefix: "refref" },
+    advanced: {
+      cookiePrefix: "refref",
+      backgroundTasks,
+    },
     socialProviders,
     database: drizzleAdapter(db, {
       provider: "pg",
@@ -228,18 +193,42 @@ export function getAuth(config: AuthConfig): RefRefAuth {
       enabled: enablePasswordAuth,
       disableSignUp,
       requireEmailVerification: true,
+      sendResetPassword: async ({ user, url }) => {
+        backgroundTasks.handler(sendLink(user.email, url, "reset"));
+      },
     },
     trustedOrigins,
     user: {
       changeEmail: { enabled: true, updateEmailWithoutVerification: false },
     },
     emailVerification: {
+      sendOnSignIn: true,
+      autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
-        await sendLink(user.email, url, "Verify your email address");
+        backgroundTasks.handler(sendLink(user.email, url, "verification"));
       },
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        // Run for native signup/resend/reset/social/magic-link and callback routes alike.
+        // Preserve Better Auth's own origin, token, expiry and rate-limit checks.
+        for (const input of [ctx.body, ctx.query]) {
+          if (!input || typeof input !== "object") continue;
+          for (const key of [
+            "callbackURL",
+            "newUserCallbackURL",
+            "errorCallbackURL",
+            "redirectTo",
+          ]) {
+            try {
+              validateAuthCallback(input[key], baseURL);
+            } catch {
+              throw new APIError("BAD_REQUEST", {
+                message: "Invalid authentication return destination",
+              });
+            }
+          }
+        }
         if (ctx.path !== "/organization/list-invitations") return;
         const session = await getSessionFromCtx(ctx);
         if (!session) throw new APIError("UNAUTHORIZED");
@@ -294,7 +283,7 @@ export function getAuth(config: AuthConfig): RefRefAuth {
             magicLink({
               disableSignUp,
               sendMagicLink: async ({ email, url }) => {
-                await sendLink(email, url, "Your Magic Link to Sign In");
+                backgroundTasks.handler(sendLink(email, url, "magic-link"));
               },
             }),
           ] as const)
@@ -324,7 +313,6 @@ export function getAuth(config: AuthConfig): RefRefAuth {
           },
         },
         async sendInvitationEmail({ id, email, role, inviter }) {
-          const sender = mailer();
           const inviteLink = `${baseURL}/accept-invitation/${id}`;
 
           const emailContent = await renderInvitationEmail({
@@ -334,13 +322,11 @@ export function getAuth(config: AuthConfig): RefRefAuth {
             inviteLink,
           });
 
-          const result = await sender.emails.send({
-            from: emailFrom,
+          await sendPostboxEmail(emailClient, postbox, {
             to: email,
             subject: "You've been invited to RefRef",
             html: emailContent,
           });
-          if (result.error) throw new Error("Email delivery failed");
         },
         organizationHooks: {
           async afterAddMember({ member }) {
@@ -391,7 +377,7 @@ export function getAuth(config: AuthConfig): RefRefAuth {
                   })),
                 );
               }
-            } catch (error) {
+            } catch {
               logger?.error("Failed to sync member to product and programs");
               // Don't throw - allow member addition to succeed even if sync fails
             }
@@ -439,7 +425,7 @@ export function getAuth(config: AuthConfig): RefRefAuth {
                     eq(productUser.userId, member.userId),
                   ),
                 );
-            } catch (error) {
+            } catch {
               logger?.error(
                 "Failed to remove member from product and programs",
               );
@@ -452,6 +438,7 @@ export function getAuth(config: AuthConfig): RefRefAuth {
         defaultPrefix: "prod_refref_key_",
         enableMetadata: true,
         rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 120 },
+        keyExpiration: { maxExpiresIn: 730 },
       }),
     ],
     databaseHooks: {
@@ -494,7 +481,7 @@ export function getAuth(config: AuthConfig): RefRefAuth {
                 userId: user.id,
                 role: "owner",
               });
-            } catch (error) {
+            } catch {
               logger?.error("Failed to create default organization for user");
               // Don't throw - allow user creation to succeed even if org creation fails
             }

@@ -1,0 +1,25 @@
+# Explicit operator opt-in only; never loaded by scripts/dev.mjs or default Compose.
+# Requires Compose supporting !reset. No published ports, backend links or DB egress.
+services:
+  webapp:
+    environment:
+      REFREF_POSTBOX_FROM: ${REFREF_POSTBOX_FROM:?configure RefRef own verified sender separately}
+      REFREF_POSTBOX_ACCESS_KEY_ID: ${REFREF_POSTBOX_ACCESS_KEY_ID:-}
+      REFREF_POSTBOX_SECRET_ACCESS_KEY: ${REFREF_POSTBOX_SECRET_ACCESS_KEY:-}
+      REFREF_POSTBOX_SESSION_TOKEN: ${REFREF_POSTBOX_SESSION_TOKEN:-}
+    dns: !reset []
+    networks:
+      private: {}
+      mail-egress: {}
+  api:
+    environment:
+      REFREF_POSTBOX_FROM: ${REFREF_POSTBOX_FROM:?configure RefRef own verified sender separately}
+      REFREF_POSTBOX_ACCESS_KEY_ID: ${REFREF_POSTBOX_ACCESS_KEY_ID:-}
+      REFREF_POSTBOX_SECRET_ACCESS_KEY: ${REFREF_POSTBOX_SECRET_ACCESS_KEY:-}
+      REFREF_POSTBOX_SESSION_TOKEN: ${REFREF_POSTBOX_SESSION_TOKEN:-}
+    dns: !reset []
+    networks:
+      private: {}
+      mail-egress: {}
+networks:
+  mail-egress: {}
